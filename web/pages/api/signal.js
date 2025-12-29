@@ -2,7 +2,7 @@ import { ref, set } from 'firebase/database';
 import { db } from '../../lib/firebase';
 
 export default async function handler(req, res) {
-  const { type, peerId, signal, targetId, hostname } = req.body;
+  const { type, peerId, signal, targetId, hostname, code } = req.body;
 
   try {
     switch(type) {
@@ -10,7 +10,8 @@ export default async function handler(req, res) {
         await set(ref(db, `peers/${peerId}`), {
           online: true,
           lastSeen: Date.now(),
-          hostname: hostname || 'Unknown PC'
+          hostname: hostname || 'Unknown PC',
+          code: code || null
         });
         res.json({ success: true, peerId });
         break;
