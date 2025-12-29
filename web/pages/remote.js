@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import SimplePeer from 'simple-peer';
-import { ref, onValue, set, off } from 'firebase/database';
+import { ref, onValue, off } from 'firebase/database';
 import { db } from '../lib/firebase';
 
 export default function RemoteControl() {
@@ -10,11 +9,10 @@ export default function RemoteControl() {
   const { peer: targetPeerId, code } = router.query;
   
   const videoRef = useRef(null);
-  const peerRef = useRef(null);
+  const peerConnectionRef = useRef(null);
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Initializing...');
   const [quality, setQuality] = useState('high');
-  const [stats, setStats] = useState({ latency: 0, fps: 0 });
 
   useEffect(() => {
     if (!targetPeerId && !code) return;
@@ -22,8 +20,8 @@ export default function RemoteControl() {
     initConnection();
 
     return () => {
-      if (peerRef.current) {
-        peerRef.current.destroy();
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
       }
     };
   }, [targetPeerId, code]);
@@ -32,157 +30,104 @@ export default function RemoteControl() {
     setStatus('Creating connection...');
 
     try {
-      const peer = new SimplePeer({
-        initiator: true,
-        trickle: true,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-          ]
-        }
-      });
+      const targetId = targetPeerId || code;
+      const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
 
-      peerRef.current = peer;
+      const configuration = {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      };
 
-      // Send offer
-      peer.on('signal', async (signal) => {
-        setStatus('Sending connection request...');
-        
-        const targetId = targetPeerId || code;
-        await fetch('/api/signal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'offer',
-            targetId: targetId,
-            peerId: 'controller-' + Date.now(),
-            signal
-          })
-        });
+      const pc = new RTCPeerConnection(configuration);
+      peerConnectionRef.current = pc;
 
-        // Listen for answer
-        const answerRef = ref(db, `signals/${targetId}/answer`);
-        const unsubscribe = onValue(answerRef, (snapshot) => {
-          const data = snapshot.val();
-          if (data && !peer.destroyed) {
-            peer.signal(data.signal);
-            off(answerRef);
-          }
-        });
-      });
-
-      peer.on('connect', () => {
-        setStatus('Connected');
-        setConnected(true);
-      });
-
-      peer.on('stream', (stream) => {
+      // Handle incoming stream
+      pc.ontrack = (event) => {
         setStatus('Screen sharing active');
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+        if (videoRef.current && event.streams[0]) {
+          videoRef.current.srcObject = event.streams[0];
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log('Connection state:', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          setStatus('Connected');
+          setConnected(true);
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          setStatus('Disconnected');
+          setConnected(false);
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log('ICE state:', pc.iceConnectionState);
+      };
+
+      // Create offer
+      const offer = await pc.createOffer({
+        offerToReceiveVideo: true,
+        offerToReceiveAudio: false
+      });
+      
+      await pc.setLocalDescription(offer);
+
+      // Wait for ICE gathering
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+        } else {
+          pc.addEventListener('icegatheringstatechange', () => {
+            if (pc.iceGatheringState === 'complete') {
+              resolve();
+            }
+          });
         }
       });
 
-      peer.on('data', (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          if (message.type === 'stats') {
-            setStats(message.data);
+      // Send offer to target
+      setStatus('Sending connection request...');
+      
+      await fetch(`${firebaseUrl}/signals/${targetId}/offer.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signal: pc.localDescription,
+          from: 'controller-' + Date.now(),
+          timestamp: Date.now()
+        })
+      });
+
+      // Listen for answer
+      const answerRef = ref(db, `signals/${targetId}/answer`);
+      const unsubscribe = onValue(answerRef, async (snapshot) => {
+        const data = snapshot.val();
+        if (data && data.signal) {
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+            console.log('Answer set successfully');
+            off(answerRef);
+          } catch (error) {
+            console.error('Error setting answer:', error);
           }
-        } catch (err) {
-          console.error('Data parse error:', err);
         }
-      });
-
-      peer.on('error', (err) => {
-        setStatus('Connection failed: ' + err.message);
-        console.error('Peer error:', err);
-      });
-
-      peer.on('close', () => {
-        setStatus('Disconnected');
-        setConnected(false);
       });
 
     } catch (error) {
-      setStatus('Connection failed');
+      setStatus('Connection failed: ' + error.message);
       console.error('Init error:', error);
     }
   };
 
-  const sendInput = (data) => {
-    if (peerRef.current && connected) {
-      try {
-        peerRef.current.send(JSON.stringify(data));
-      } catch (err) {
-        console.error('Send error:', err);
-      }
-    }
-  };
-
-  const handleMouseMove = (e) => {
-    if (!connected || !videoRef.current) return;
-    
-    const rect = videoRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    
-    sendInput({ t: 'm', x, y });
-  };
-
-  const handleMouseDown = (e) => {
-    if (!connected) return;
-    e.preventDefault();
-    sendInput({ t: 'c', b: e.button, a: 'd' });
-  };
-
-  const handleMouseUp = (e) => {
-    if (!connected) return;
-    e.preventDefault();
-    sendInput({ t: 'c', b: e.button, a: 'u' });
-  };
-
-  const handleKeyDown = (e) => {
-    if (!connected) return;
-    e.preventDefault();
-    sendInput({ t: 'k', k: e.key, c: e.keyCode, a: 'd' });
-  };
-
-  const handleKeyUp = (e) => {
-    if (!connected) return;
-    e.preventDefault();
-    sendInput({ t: 'k', k: e.key, c: e.keyCode, a: 'u' });
-  };
-
-  const handleWheel = (e) => {
-    if (!connected) return;
-    e.preventDefault();
-    sendInput({ t: 'w', d: e.deltaY > 0 ? 'd' : 'u' });
-  };
-
-  const handleContextMenu = (e) => {
-    e.preventDefault();
-    if (connected) {
-      sendInput({ t: 'c', b: 2, a: 'd' });
-      setTimeout(() => sendInput({ t: 'c', b: 2, a: 'u' }), 100);
-    }
-  };
-
   const disconnect = () => {
-    if (peerRef.current) {
-      peerRef.current.destroy();
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
     }
     router.push('/dashboard');
-  };
-
-  const changeQuality = (newQuality) => {
-    setQuality(newQuality);
-    if (connected) {
-      sendInput({ t: 'quality', q: newQuality });
-    }
   };
 
   return (
@@ -206,19 +151,12 @@ export default function RemoteControl() {
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-sm text-slate-300">{status}</span>
             </div>
-
-            {connected && (
-              <div className="text-xs text-slate-500 flex items-center space-x-4">
-                <span>Latency: {stats.latency}ms</span>
-                <span>FPS: {stats.fps}</span>
-              </div>
-            )}
           </div>
           
           <div className="flex items-center space-x-3">
             <select
               value={quality}
-              onChange={(e) => changeQuality(e.target.value)}
+              onChange={(e) => setQuality(e.target.value)}
               className="px-3 py-1.5 bg-slate-800 text-slate-300 text-sm rounded border border-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <option value="high">High Quality</option>
@@ -259,21 +197,13 @@ export default function RemoteControl() {
                 autoPlay
                 playsInline
                 muted
-                className="w-full rounded-lg shadow-2xl cursor-none bg-slate-900"
-                onMouseMove={handleMouseMove}
-                onMouseDown={handleMouseDown}
-                onMouseUp={handleMouseUp}
-                onKeyDown={handleKeyDown}
-                onKeyUp={handleKeyUp}
-                onWheel={handleWheel}
-                onContextMenu={handleContextMenu}
-                tabIndex={0}
+                className="w-full rounded-lg shadow-2xl bg-slate-900"
               />
               
               {/* Control Overlay */}
               <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg px-4 py-2">
-                <p className="text-white text-sm font-medium">🖱️ Controlling Remote PC</p>
-                <p className="text-slate-400 text-xs">Move mouse, click, type, scroll</p>
+                <p className="text-white text-sm font-medium">🖥️ Viewing Remote Screen</p>
+                <p className="text-slate-400 text-xs">Screen sharing active</p>
               </div>
             </div>
           )}
