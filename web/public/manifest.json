@@ -1,0 +1,17 @@
+{
+  "name": "HebzConnect - Remote Desktop",
+  "short_name": "HebzConnect",
+  "description": "Professional remote desktop control",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "/hebzconnect-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
