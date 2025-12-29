@@ -1,36 +1,48 @@
-export default async function handler(req, res) {
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+export const config = {
+  runtime: 'edge',
+};
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
+export default async function handler(req) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   try {
-    // Import Firebase only when needed
-    const { ref, get } = await import('firebase/database');
-    const { db } = await import('../../lib/firebase');
+    const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+    
+    if (!firebaseUrl) {
+      throw new Error('Firebase URL not configured');
+    }
 
-    const snapshot = await get(ref(db, 'peers'));
-    const peers = snapshot.val() || {};
+    // Fetch peers using Firebase REST API
+    const response = await fetch(`${firebaseUrl}/peers.json`);
+    
+    if (!response.ok) {
+      throw new Error('Firebase read failed');
+    }
+    
+    const peers = await response.json() || {};
     
     const now = Date.now();
     const onlinePeers = Object.entries(peers)
       .filter(([_, data]) => now - data.lastSeen < 30000)
       .map(([id, data]) => ({ id, ...data }));
 
-    return res.status(200).json({ peers: onlinePeers });
+    return new Response(JSON.stringify({ peers: onlinePeers }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
   } catch (error) {
     console.error('Peers API Error:', error);
-    return res.status(500).json({ 
+    return new Response(JSON.stringify({ 
       error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: error.toString()
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
     });
   }
 }
