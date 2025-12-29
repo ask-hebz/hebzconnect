@@ -1,57 +1,104 @@
-export default async function handler(req, res) {
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+export const config = {
+  runtime: 'edge',
+};
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
+export default async function handler(req) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   try {
-    // Import Firebase only when needed
-    const { ref, set } = await import('firebase/database');
-    const { db } = await import('../../lib/firebase');
+    const body = await req.json();
+    const { type, peerId, signal, targetId, hostname, code } = body;
 
-    const { type, peerId, signal, targetId, hostname, code } = req.body;
+    // Use fetch to interact with Firebase REST API directly
+    const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+    
+    if (!firebaseUrl) {
+      throw new Error('Firebase URL not configured');
+    }
 
     switch(type) {
-      case 'register':
-        await set(ref(db, `peers/${peerId}`), {
-          online: true,
-          lastSeen: Date.now(),
-          hostname: hostname || 'Unknown PC',
-          code: code || null
+      case 'register': {
+        const response = await fetch(`${firebaseUrl}/peers/${peerId}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            online: true,
+            lastSeen: Date.now(),
+            hostname: hostname || 'Unknown PC',
+            code: code || null
+          })
         });
-        return res.status(200).json({ success: true, peerId });
+        
+        if (!response.ok) {
+          throw new Error('Firebase write failed');
+        }
+        
+        return new Response(JSON.stringify({ success: true, peerId }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
 
-      case 'offer':
-        await set(ref(db, `signals/${targetId}/offer`), {
-          signal,
-          from: peerId,
-          timestamp: Date.now()
+      case 'offer': {
+        const response = await fetch(`${firebaseUrl}/signals/${targetId}/offer.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signal,
+            from: peerId,
+            timestamp: Date.now()
+          })
         });
-        return res.status(200).json({ success: true });
+        
+        if (!response.ok) {
+          throw new Error('Firebase write failed');
+        }
+        
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
 
-      case 'answer':
-        await set(ref(db, `signals/${peerId}/answer`), {
-          signal,
-          timestamp: Date.now()
+      case 'answer': {
+        const response = await fetch(`${firebaseUrl}/signals/${peerId}/answer.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signal,
+            timestamp: Date.now()
+          })
         });
-        return res.status(200).json({ success: true });
+        
+        if (!response.ok) {
+          throw new Error('Firebase write failed');
+        }
+        
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
 
       default:
-        return res.status(400).json({ error: 'Invalid type' });
+        return new Response(JSON.stringify({ error: 'Invalid type' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
     }
   } catch (error) {
     console.error('Signal API Error:', error);
-    return res.status(500).json({ 
+    return new Response(JSON.stringify({ 
       error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: error.toString()
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
     });
   }
 }
