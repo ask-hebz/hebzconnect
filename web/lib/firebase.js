@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
 
 const firebaseConfig = {
@@ -8,5 +8,13 @@ const firebaseConfig = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
 };
 
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase only once
+let app;
+if (!getApps().length) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApps()[0];
+}
+
 export const db = getDatabase(app);
+export default app;
