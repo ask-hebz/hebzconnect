@@ -11,24 +11,25 @@ export default function ConnectStream() {
   const peerConnectionRef = useRef(null);
   const streamRef = useRef(null);
   const hasAnsweredRef = useRef(false);
+  const pendingCandidatesRef = useRef([]);
 
   useEffect(() => {
-    console.log('🚀 Initializing connect stream...');
+    console.log('🚀 Init connect stream');
     generateCodeAndStart();
     
     return () => {
-      console.log('🧹 Cleaning up...');
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => {
-          console.log('🛑 Stopping track:', track.kind);
-          track.stop();
-        });
-      }
+      cleanup();
     };
   }, []);
+
+  const cleanup = () => {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+  };
 
   const generateCodeAndStart = async () => {
     const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -37,8 +38,7 @@ export default function ConnectStream() {
 
     const id = `PC-${Date.now().toString(36)}`;
     setPeerId(id);
-    console.log('🆔 Peer ID:', id);
-    console.log('🔑 Code:', formattedCode);
+    console.log('🆔 ID:', id, 'Code:', formattedCode);
 
     try {
       const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
@@ -54,13 +54,12 @@ export default function ConnectStream() {
         })
       });
 
-      console.log('✅ Peer registered in Firebase');
       setStatus('Ready - Share your code');
       startHeartbeat(id, formattedCode);
       listenForConnection(id);
     } catch (error) {
       setStatus('Connection failed');
-      console.error('❌ Registration error:', error);
+      console.error('Registration error:', error);
     }
   };
 
@@ -79,33 +78,32 @@ export default function ConnectStream() {
           })
         });
       } catch (error) {
-        console.error('💔 Heartbeat failed');
+        console.error('Heartbeat failed');
       }
     }, 10000);
   };
 
   const listenForConnection = (id) => {
-    console.log('👂 Listening for incoming connections...');
+    console.log('👂 Listening for offer');
     const offerRef = ref(db, `signals/${id}/offer`);
     
     onValue(offerRef, async (snapshot) => {
       const data = snapshot.val();
       if (data && !hasAnsweredRef.current) {
-        console.log('📥 Offer received!');
+        console.log('📥 Offer received');
         hasAnsweredRef.current = true;
         setStatus('Incoming connection...');
         await handleOffer(data, id);
-        off(offerRef);
       }
     });
   };
 
   const handleOffer = async (offerData, id) => {
     try {
-      setStatus('Requesting screen access...');
-      console.log('🖥️ Requesting screen share permission...');
+      setStatus('Requesting screen...');
+      console.log('🖥️ Requesting screen share');
       
-      // CRITICAL: Request screen FIRST before creating peer connection
+      // Get screen FIRST
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           cursor: 'always',
@@ -117,206 +115,122 @@ export default function ConnectStream() {
         audio: false
       });
 
-      console.log('✅ Screen share granted!');
-      console.log('📊 Stream info:');
-      console.log('  - Stream ID:', stream.id);
-      console.log('  - Video tracks:', stream.getVideoTracks().length);
-      console.log('  - Audio tracks:', stream.getAudioTracks().length);
-      
-      // Verify track details
-      const videoTrack = stream.getVideoTracks()[0];
-      if (!videoTrack) {
-        console.error('❌ NO VIDEO TRACK AVAILABLE!');
-        setStatus('No video track available');
-        return;
-      }
-
-      console.log('📹 Video track details:', {
-        kind: videoTrack.kind,
-        label: videoTrack.label,
-        enabled: videoTrack.enabled,
-        muted: videoTrack.muted,
-        readyState: videoTrack.readyState,
-        id: videoTrack.id
-      });
-
+      console.log('✅ Screen granted');
       streamRef.current = stream;
       setStatus('Screen capture started');
 
-      // Enhanced ICE configuration
+      // Create peer connection
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:global.stun.twilio.com:3478' }
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
         ],
-        iceCandidatePoolSize: 10
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
       };
 
-      console.log('🔧 Creating peer connection...');
+      console.log('🔧 Creating peer connection');
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
-      // CRITICAL FIX: Add tracks BEFORE setting remote description
-      console.log('📤 Adding tracks to peer connection FIRST...');
-      
-      stream.getTracks().forEach((track, index) => {
-        console.log(`  [${index}] Adding ${track.kind} track: ${track.label}`);
-        console.log(`      - ID: ${track.id}`);
-        console.log(`      - Enabled: ${track.enabled}`);
-        console.log(`      - ReadyState: ${track.readyState}`);
-        
-        const sender = pc.addTrack(track, stream);
-        
-        console.log(`      ✅ Track added successfully`);
-        console.log(`      - Sender ID: ${sender.track?.id}`);
-        console.log(`      - Sender track type: ${sender.track?.kind}`);
+      // Add tracks FIRST
+      console.log('📤 Adding tracks');
+      stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream);
+        console.log('✅ Track added:', track.kind);
       });
 
-      // Verify senders immediately
-      const senders = pc.getSenders();
-      console.log(`\n📡 Verification - Active senders: ${senders.length}`);
-      senders.forEach((sender, index) => {
-        if (sender.track) {
-          console.log(`  Sender ${index}:`, {
-            trackId: sender.track.id,
-            kind: sender.track.kind,
-            enabled: sender.track.enabled,
-            readyState: sender.track.readyState,
-            label: sender.track.label
+      // ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log('🧊 Sending ICE candidate');
+          set(ref(db, `signals/${id}/sharerCandidates/${Date.now()}`), {
+            candidate: event.candidate.toJSON(),
+            timestamp: Date.now()
           });
-        } else {
-          console.warn(`  Sender ${index}: NO TRACK!`);
         }
-      });
+      };
 
-      if (senders.length === 0) {
-        console.error('❌ CRITICAL: No senders after adding tracks!');
-        setStatus('Failed to add video tracks');
-        return;
-      }
-
-      // NOW set remote description (offer)
-      console.log('\n📥 Setting remote description (offer)...');
-      await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
-      console.log('✅ Remote description set');
-
-      // Create answer
-      console.log('📤 Creating answer...');
-      const answer = await pc.createAnswer();
-      console.log('✅ Answer created');
-      console.log('   Answer SDP includes:', answer.sdp.includes('m=video') ? '✅ VIDEO' : '❌ NO VIDEO');
-      
-      await pc.setLocalDescription(answer);
-      console.log('✅ Local description set');
-
-      // Monitor connection state
+      // Connection state
       pc.onconnectionstatechange = () => {
-        console.log('🔄 Connection state:', pc.connectionState);
+        console.log('Connection:', pc.connectionState);
         if (pc.connectionState === 'connected') {
-          setStatus('Connected - Controller is viewing your screen');
+          setStatus('Connected - Viewer is watching');
           setConnected(true);
-          console.log('✅ Peer connection established!');
-          
-          // Re-verify senders after connection
-          const currentSenders = pc.getSenders();
-          console.log('📡 Current senders after connect:', currentSenders.length);
-          currentSenders.forEach((s, i) => {
-            console.log(`  Sender ${i}: ${s.track?.kind} - ${s.track?.readyState}`);
-          });
-        } else if (pc.connectionState === 'disconnected') {
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
           setStatus('Disconnected');
           setConnected(false);
-        } else if (pc.connectionState === 'failed') {
-          setStatus('Connection failed');
-          setConnected(false);
         }
       };
 
-      // ICE connection state
       pc.oniceconnectionstatechange = () => {
-        console.log('🧊 ICE connection state:', pc.iceConnectionState);
+        console.log('ICE:', pc.iceConnectionState);
       };
 
-      // Monitor negotiation
-      pc.onnegotiationneeded = () => {
-        console.log('🔄 Negotiation needed');
-      };
+      // Set remote description (offer)
+      console.log('📥 Setting offer');
+      await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
 
-      // Wait for ICE gathering
-      console.log('⏳ Waiting for ICE gathering...');
-      await new Promise((resolve) => {
-        if (pc.iceGatheringState === 'complete') {
-          console.log('✅ ICE already complete');
-          resolve();
-        } else {
-          pc.addEventListener('icegatheringstatechange', () => {
-            if (pc.iceGatheringState === 'complete') {
-              console.log('✅ ICE gathering completed');
-              resolve();
-            }
-          });
-          setTimeout(() => {
-            console.log('⏱️ ICE timeout (proceeding)');
-            resolve();
-          }, 5000);
-        }
+      // Process pending ICE candidates
+      console.log('Processing pending candidates:', pendingCandidatesRef.current.length);
+      for (const candidate of pendingCandidatesRef.current) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+      pendingCandidatesRef.current = [];
+
+      // Create answer
+      console.log('📤 Creating answer');
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      // Send answer immediately
+      console.log('📤 Sending answer');
+      await set(ref(db, `signals/${id}/answer`), {
+        signal: pc.localDescription.toJSON(),
+        timestamp: Date.now()
       });
 
-      // Send answer to controller via Firebase
-      console.log('📤 Sending answer to Firebase...');
-      const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
-      await fetch(`${firebaseUrl}/signals/${id}/answer.json`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signal: pc.localDescription,
-          timestamp: Date.now()
-        })
-      });
-      console.log('✅ Answer sent');
       setStatus('Connecting...');
 
-      // Monitor track events
-      videoTrack.onended = () => {
-        console.log('🛑 Screen sharing stopped by user');
+      // Listen for viewer's ICE candidates
+      const viewerCandidatesRef = ref(db, `signals/${id}/viewerCandidates`);
+      onValue(viewerCandidatesRef, (snapshot) => {
+        const candidates = snapshot.val();
+        if (candidates) {
+          Object.values(candidates).forEach(async (data) => {
+            try {
+              if (pc.remoteDescription) {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                console.log('✅ Added viewer ICE candidate');
+              } else {
+                pendingCandidatesRef.current.push(data.candidate);
+                console.log('📝 Queued viewer ICE candidate');
+              }
+            } catch (error) {
+              console.error('ICE candidate error:', error);
+            }
+          });
+        }
+      });
+
+      // Track ended
+      stream.getVideoTracks()[0].onended = () => {
+        console.log('🛑 Screen sharing stopped');
         setStatus('Screen sharing stopped');
         if (pc) pc.close();
       };
 
-      videoTrack.onmute = () => {
-        console.log('🔇 Video track muted');
-      };
-
-      videoTrack.onunmute = () => {
-        console.log('🔊 Video track unmuted');
-      };
-
-      // Debug: Log track state every 2 seconds
-      const trackMonitor = setInterval(() => {
-        if (videoTrack.readyState !== 'live') {
-          console.warn('⚠️ Track not live:', videoTrack.readyState);
-        }
-        const currentSenders = pc.getSenders();
-        if (currentSenders.length === 0) {
-          console.error('❌ No senders detected!');
-        }
-      }, 2000);
-
-      // Cleanup monitor
-      setTimeout(() => clearInterval(trackMonitor), 30000);
-
     } catch (error) {
       if (error.name === 'NotAllowedError') {
-        setStatus('Screen capture permission denied');
-        console.error('❌ User denied screen sharing');
-      } else if (error.name === 'NotFoundError') {
-        setStatus('No screen available to capture');
-        console.error('❌ No screen found');
+        setStatus('Screen permission denied');
+        console.error('User denied');
       } else {
         setStatus('Screen capture failed: ' + error.message);
-        console.error('❌ Screen capture error:', error);
+        console.error('Error:', error);
       }
     }
   };
@@ -325,7 +239,6 @@ export default function ConnectStream() {
     <>
       <Head>
         <title>HebzConnect - Remote Access</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
         <div className="bg-slate-800/80 backdrop-blur-xl border border-slate-700/50 rounded-3xl shadow-2xl p-8 w-full max-w-2xl">
@@ -347,7 +260,7 @@ export default function ConnectStream() {
               </div>
             </div>
             <p className="text-slate-400 text-center text-sm">
-              Share this code with the person who will control this computer
+              Share this code with the person who will view your screen
             </p>
           </div>
 
@@ -363,31 +276,22 @@ export default function ConnectStream() {
               <>
                 <h3 className="text-lg font-semibold text-green-300 mb-3">✅ Connected!</h3>
                 <ul className="text-slate-400 text-sm space-y-2">
-                  <li>• Your screen is being shared</li>
-                  <li>• The controller can see your screen</li>
+                  <li>• Viewer is watching your screen</li>
                   <li>• Keep this window open</li>
-                  <li>• Click "Stop Sharing" in browser to disconnect</li>
+                  <li>• Click "Stop Sharing" in browser to end</li>
                 </ul>
               </>
             ) : (
               <>
                 <h3 className="text-lg font-semibold text-blue-300 mb-3">📋 Instructions:</h3>
                 <ol className="text-slate-400 text-sm space-y-2">
-                  <li>1. Keep this window open</li>
-                  <li>2. Share the code above with the remote controller</li>
-                  <li>3. They will enter this code to connect</li>
-                  <li>4. Browser will ask to share your screen - click "Allow"</li>
-                  <li>5. Select "Entire Screen" for best results</li>
-                  <li>6. Once connected, they can view your screen</li>
+                  <li>1. Share the code above with the viewer</li>
+                  <li>2. They will enter the code to connect</li>
+                  <li>3. Browser will ask to share screen - click "Allow"</li>
+                  <li>4. Select "Entire Screen" for best results</li>
                 </ol>
               </>
             )}
-          </div>
-
-          <div className="mt-6 bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-4">
-            <p className="text-yellow-300 text-xs text-center">
-              ⚠️ Note: Full mouse/keyboard control requires desktop agent. Browser version allows screen viewing only.
-            </p>
           </div>
 
           <div className="mt-8 text-center text-xs text-slate-600">
