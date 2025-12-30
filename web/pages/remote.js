@@ -27,6 +27,10 @@ export default function RemoteControl() {
   useEffect(() => {
     if (!targetPeerId && !code) return;
     
+    // Force show initialization
+    const timestamp = new Date().toISOString();
+    setDebugInfo([`⚡ INIT ${timestamp.slice(11,19)}`]);
+    
     try {
       // Detect mobile FIRST
       const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -357,7 +361,7 @@ export default function RemoteControl() {
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-sm text-slate-300">{status}</span>
-              <span className="text-xs text-slate-600 ml-2">v3.4</span>
+              <span className="text-xs text-slate-600 ml-2">v3.5-FRESH</span>
             </div>
 
             {hasVideo && (
