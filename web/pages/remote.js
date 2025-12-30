@@ -9,19 +9,28 @@ export default function RemoteControl() {
   const { peer: targetPeerId, code } = router.query;
   
   const videoRef = useRef(null);
+  const containerRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Initializing...');
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     if (!targetPeerId && !code) return;
     
     initConnection();
 
+    // Listen for fullscreen changes
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
     return () => {
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
   }, [targetPeerId, code]);
 
@@ -35,7 +44,7 @@ export default function RemoteControl() {
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun1.l.google.com:19302' },
           { urls: 'stun:global.stun.twilio.com:3478' }
         ]
       };
@@ -145,36 +154,45 @@ export default function RemoteControl() {
     router.push('/dashboard');
   };
 
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
   return (
     <>
       <Head>
         <title>HebzConnect - Remote Control</title>
       </Head>
-      <div className="min-h-screen bg-black">
+      <div className="min-h-screen bg-black" ref={containerRef}>
         <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <button
               onClick={disconnect}
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
             >
               ← Disconnect
             </button>
             
             <div className="flex items-center space-x-2">
-              <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-sm text-slate-300">{status}</span>
             </div>
           </div>
           
           <button
-            onClick={() => videoRef.current?.requestFullscreen()}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded"
+            onClick={toggleFullscreen}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded transition-colors"
           >
-            ⛶ Fullscreen
+            {isFullscreen ? '⛶ Exit Fullscreen' : '⛶ Fullscreen'}
           </button>
         </div>
 
-        <div className="flex items-center justify-center min-h-[calc(100vh-48px)] p-4">
+        {/* FIXED: Full screen video container */}
+        <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 48px)' }}>
           {!connected ? (
             <div className="text-center">
               <svg className="animate-spin h-12 w-12 text-blue-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
@@ -184,19 +202,39 @@ export default function RemoteControl() {
               <p className="text-slate-400">{status}</p>
             </div>
           ) : (
-            <div className="relative w-full max-w-7xl">
+            <div className="relative w-full h-full flex items-center justify-center p-4">
+              {/* FIXED: Full screen video with proper sizing */}
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                style={{ width: '100%', maxHeight: '85vh', objectFit: 'contain' }}
+                style={{ 
+                  width: '100%', 
+                  height: '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain' 
+                }}
                 className="rounded-lg shadow-2xl bg-slate-900"
               />
               
-              <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2">
-                <p className="text-white text-sm font-medium">🖥️ Viewing Remote Screen</p>
+              {/* Viewing indicator */}
+              <div className="absolute top-6 left-6 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2 pointer-events-none">
+                <p className="text-white text-sm font-medium flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  🖥️ Viewing Remote Screen
+                </p>
               </div>
+
+              {/* Resolution info */}
+              {videoRef.current?.videoWidth && (
+                <div className="absolute bottom-6 right-6 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2 pointer-events-none">
+                  <p className="text-white text-xs font-mono">
+                    {videoRef.current.videoWidth}x{videoRef.current.videoHeight}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
