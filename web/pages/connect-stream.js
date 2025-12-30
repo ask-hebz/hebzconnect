@@ -13,14 +13,19 @@ export default function ConnectStream() {
   const hasAnsweredRef = useRef(false);
 
   useEffect(() => {
+    console.log('🚀 Initializing connect stream...');
     generateCodeAndStart();
     
     return () => {
+      console.log('🧹 Cleaning up...');
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach(track => {
+          console.log('🛑 Stopping track:', track.kind);
+          track.stop();
+        });
       }
     };
   }, []);
@@ -32,6 +37,8 @@ export default function ConnectStream() {
 
     const id = `PC-${Date.now().toString(36)}`;
     setPeerId(id);
+    console.log('🆔 Peer ID:', id);
+    console.log('🔑 Code:', formattedCode);
 
     try {
       const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
@@ -47,12 +54,13 @@ export default function ConnectStream() {
         })
       });
 
+      console.log('✅ Peer registered in Firebase');
       setStatus('Ready - Share your code');
       startHeartbeat(id, formattedCode);
       listenForConnection(id);
     } catch (error) {
       setStatus('Connection failed');
-      console.error('Registration error:', error);
+      console.error('❌ Registration error:', error);
     }
   };
 
@@ -71,17 +79,19 @@ export default function ConnectStream() {
           })
         });
       } catch (error) {
-        console.error('Heartbeat failed');
+        console.error('💔 Heartbeat failed');
       }
     }, 10000);
   };
 
   const listenForConnection = (id) => {
+    console.log('👂 Listening for incoming connections...');
     const offerRef = ref(db, `signals/${id}/offer`);
     
     onValue(offerRef, async (snapshot) => {
       const data = snapshot.val();
       if (data && !hasAnsweredRef.current) {
+        console.log('📥 Offer received!');
         hasAnsweredRef.current = true;
         setStatus('Incoming connection...');
         await handleOffer(data, id);
@@ -93,57 +103,156 @@ export default function ConnectStream() {
   const handleOffer = async (offerData, id) => {
     try {
       setStatus('Requesting screen access...');
+      console.log('🖥️ Requesting screen share permission...');
       
+      // Request screen share with optimal settings
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           cursor: 'always',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 30 }
+          displaySurface: 'monitor',
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 30, max: 30 }
         },
         audio: false
+      });
+
+      console.log('✅ Screen share granted!');
+      console.log('📊 Stream info:');
+      console.log('  - Stream ID:', stream.id);
+      console.log('  - Video tracks:', stream.getVideoTracks().length);
+      console.log('  - Audio tracks:', stream.getAudioTracks().length);
+      
+      // Check track details
+      stream.getVideoTracks().forEach((track, index) => {
+        console.log(`  - Video track ${index}:`, {
+          kind: track.kind,
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState
+        });
       });
 
       streamRef.current = stream;
       setStatus('Screen capture started');
 
+      // Enhanced ICE configuration
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:global.stun.twilio.com:3478' }
-        ]
+        ],
+        iceCandidatePoolSize: 10
       };
 
+      console.log('🔧 Creating peer connection...');
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
-      // Add stream tracks to peer connection
+      // CRITICAL: Add stream tracks to peer connection
+      console.log('📤 Adding tracks to peer connection...');
+      let trackCount = 0;
       stream.getTracks().forEach(track => {
-        pc.addTrack(track, stream);
+        console.log(`  - Adding ${track.kind} track:`, track.label);
+        const sender = pc.addTrack(track, stream);
+        console.log(`    ✅ Track added, sender:`, sender);
+        trackCount++;
       });
+      console.log(`✅ Total tracks added: ${trackCount}`);
 
-      // Set remote description (offer)
-      await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
-
-      // Create answer
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      // Wait for ICE gathering to complete
-      await new Promise((resolve) => {
-        if (pc.iceGatheringState === 'complete') {
-          resolve();
-        } else {
-          pc.addEventListener('icegatheringstatechange', () => {
-            if (pc.iceGatheringState === 'complete') {
-              resolve();
-            }
+      // Verify senders
+      const senders = pc.getSenders();
+      console.log('📡 Active senders:', senders.length);
+      senders.forEach((sender, index) => {
+        if (sender.track) {
+          console.log(`  Sender ${index}:`, {
+            kind: sender.track.kind,
+            enabled: sender.track.enabled,
+            readyState: sender.track.readyState
           });
         }
       });
 
+      // Monitor connection state
+      pc.onconnectionstatechange = () => {
+        console.log('🔄 Connection state:', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          setStatus('Connected - Controller is viewing your screen');
+          setConnected(true);
+          console.log('✅ Peer connection established!');
+        } else if (pc.connectionState === 'disconnected') {
+          setStatus('Disconnected');
+          setConnected(false);
+          console.log('⚠️ Peer disconnected');
+        } else if (pc.connectionState === 'failed') {
+          setStatus('Connection failed');
+          setConnected(false);
+          console.error('❌ Connection failed');
+        }
+      };
+
+      // ICE connection state
+      pc.oniceconnectionstatechange = () => {
+        console.log('🧊 ICE connection state:', pc.iceConnectionState);
+      };
+
+      // ICE gathering state
+      pc.onicegatheringstatechange = () => {
+        console.log('📡 ICE gathering state:', pc.iceGatheringState);
+      };
+
+      // ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log('🧊 New ICE candidate:', event.candidate.type);
+        }
+      };
+
+      // Signaling state
+      pc.onsignalingstatechange = () => {
+        console.log('📶 Signaling state:', pc.signalingState);
+      };
+
+      // Set remote description (offer)
+      console.log('📥 Setting remote description (offer)...');
+      await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
+      console.log('✅ Remote description set');
+
+      // Create answer
+      console.log('📤 Creating answer...');
+      const answer = await pc.createAnswer();
+      console.log('✅ Answer created');
+      
+      await pc.setLocalDescription(answer);
+      console.log('✅ Local description set');
+
+      // Wait for ICE gathering to complete
+      console.log('⏳ Waiting for ICE gathering...');
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          console.log('✅ ICE already complete');
+          resolve();
+        } else {
+          pc.addEventListener('icegatheringstatechange', () => {
+            console.log('  ICE state:', pc.iceGatheringState);
+            if (pc.iceGatheringState === 'complete') {
+              console.log('✅ ICE gathering completed');
+              resolve();
+            }
+          });
+          // Timeout after 5 seconds
+          setTimeout(() => {
+            console.log('⏱️ ICE timeout (proceeding anyway)');
+            resolve();
+          }, 5000);
+        }
+      });
+
       // Send answer to controller via Firebase
+      console.log('📤 Sending answer to Firebase...');
       const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
       await fetch(`${firebaseUrl}/signals/${id}/answer.json`, {
         method: 'PUT',
@@ -153,27 +262,36 @@ export default function ConnectStream() {
           timestamp: Date.now()
         })
       });
-
-      pc.onconnectionstatechange = () => {
-        console.log('Connection state:', pc.connectionState);
-        if (pc.connectionState === 'connected') {
-          setStatus('Connected - Controller is viewing your screen');
-          setConnected(true);
-        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-          setStatus('Disconnected');
-          setConnected(false);
-        }
-      };
+      console.log('✅ Answer sent to Firebase');
+      setStatus('Connecting...');
 
       // Track when screen sharing stops
       stream.getVideoTracks()[0].onended = () => {
+        console.log('🛑 Screen sharing stopped by user');
         setStatus('Screen sharing stopped');
         if (pc) pc.close();
       };
 
+      // Monitor track events
+      stream.getVideoTracks()[0].onmute = () => {
+        console.log('🔇 Video track muted');
+      };
+
+      stream.getVideoTracks()[0].onunmute = () => {
+        console.log('🔊 Video track unmuted');
+      };
+
     } catch (error) {
-      setStatus('Screen capture denied or failed');
-      console.error('Screen capture error:', error);
+      if (error.name === 'NotAllowedError') {
+        setStatus('Screen capture permission denied');
+        console.error('❌ User denied screen sharing');
+      } else if (error.name === 'NotFoundError') {
+        setStatus('No screen available to capture');
+        console.error('❌ No screen found');
+      } else {
+        setStatus('Screen capture failed: ' + error.message);
+        console.error('❌ Screen capture error:', error);
+      }
     }
   };
 
