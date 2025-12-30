@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { ref, onValue, set, off } from 'firebase/database';
 import { db } from '../lib/firebase';
 
 export default function ConnectStream() {
+  const router = useRouter();
   const [code, setCode] = useState('');
   const [status, setStatus] = useState('Generating code...');
   const [peerId, setPeerId] = useState('');
@@ -240,6 +242,19 @@ export default function ConnectStream() {
       </Head>
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
         <div className="bg-slate-800/80 backdrop-blur-xl border border-slate-700/50 rounded-3xl shadow-2xl p-8 w-full max-w-2xl">
+          {/* Back Button */}
+          <div className="mb-6">
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="flex items-center space-x-2 text-slate-400 hover:text-white transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              <span>Back to Dashboard</span>
+            </button>
+          </div>
+
           <div className="text-center mb-8">
             <img src="/hebzconnect-logo.png" alt="HebzConnect" className="w-32 h-32 mx-auto mb-4" />
             <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
