@@ -122,9 +122,6 @@ export default function ConnectStream() {
       // Create peer connection
       console.log('🔧 Creating peer connection');
       
-      // Detect mobile  
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -135,12 +132,6 @@ export default function ConnectStream() {
         ],
         iceCandidatePoolSize: 10
       };
-      
-      // Only use max-bundle on desktop
-      if (!isMobile) {
-        configuration.bundlePolicy = 'max-bundle';
-        configuration.rtcpMuxPolicy = 'require';
-      }
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
