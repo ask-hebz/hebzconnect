@@ -53,6 +53,10 @@ export default function RemoteControl() {
       const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
 
       console.log('🔧 Creating peer connection');
+      
+      // Detect mobile
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -61,10 +65,14 @@ export default function RemoteControl() {
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' }
         ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require'
+        iceCandidatePoolSize: 10
       };
+      
+      // Only use max-bundle on desktop
+      if (!isMobile) {
+        configuration.bundlePolicy = 'max-bundle';
+        configuration.rtcpMuxPolicy = 'require';
+      }
 
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
