@@ -77,20 +77,27 @@ export default function RemoteControl() {
       // CRITICAL: Track handling like Google Meet
       pc.ontrack = (event) => {
         console.log('📺 Track received');
+        addDebugLog('📺 Video track received!');
         const stream = event.streams[0];
         
         if (videoRef.current && stream) {
           console.log('🎬 Attaching stream to video');
+          addDebugLog('🎬 Attaching video stream');
           videoRef.current.srcObject = stream;
           
           // Force play immediately
-          videoRef.current.play().catch(e => {
+          videoRef.current.play().then(() => {
+            addDebugLog('✅ Video playing!');
+            setHasVideo(true);
+          }).catch(e => {
             console.log('Retrying with muted');
+            addDebugLog('🔇 Retrying muted...');
             videoRef.current.muted = true;
-            videoRef.current.play();
+            videoRef.current.play().then(() => {
+              addDebugLog('✅ Video playing (muted)');
+              setHasVideo(true);
+            });
           });
-          
-          setHasVideo(true);
         }
       };
 
@@ -238,24 +245,67 @@ export default function RemoteControl() {
 
       // Listen for sharer's ICE candidates
       const sharerCandidatesRef = ref(db, `signals/${targetId}/sharerCandidates`);
-      onValue(sharerCandidatesRef, (snapshot) => {
-        const candidates = snapshot.val();
-        if (candidates) {
-          Object.values(candidates).forEach(async (data) => {
-            try {
-              if (pc.remoteDescription) {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                console.log('✅ Added ICE candidate');
-              } else {
-                pendingCandidatesRef.current.push(data.candidate);
-                console.log('📝 Queued ICE candidate');
+      
+      if (isMobile) {
+        // MOBILE: Poll for ICE candidates via HTTP
+        addDebugLog('📡 Polling for ICE candidates...');
+        const pollForCandidates = async () => {
+          try {
+            const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+            const response = await fetch(`${firebaseUrl}/signals/${targetId}/sharerCandidates.json`);
+            const candidates = await response.json();
+            
+            if (candidates) {
+              const candidateCount = Object.keys(candidates).length;
+              addDebugLog(`🧊 Found ${candidateCount} ICE candidates`);
+              
+              for (const data of Object.values(candidates)) {
+                try {
+                  if (pc.remoteDescription) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    console.log('✅ Added ICE candidate');
+                  } else {
+                    pendingCandidatesRef.current.push(data.candidate);
+                  }
+                } catch (error) {
+                  console.error('ICE candidate error:', error);
+                }
               }
-            } catch (error) {
-              console.error('ICE candidate error:', error);
             }
-          });
-        }
-      });
+            
+            // Keep polling for new candidates
+            if (pc && pc.connectionState !== 'closed') {
+              setTimeout(pollForCandidates, 2000);
+            }
+          } catch (error) {
+            console.error('Candidate polling error:', error);
+            setTimeout(pollForCandidates, 2000);
+          }
+        };
+        
+        pollForCandidates();
+        
+      } else {
+        // DESKTOP: Use real-time listener
+        onValue(sharerCandidatesRef, (snapshot) => {
+          const candidates = snapshot.val();
+          if (candidates) {
+            Object.values(candidates).forEach(async (data) => {
+              try {
+                if (pc.remoteDescription) {
+                  await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                  console.log('✅ Added ICE candidate');
+                } else {
+                  pendingCandidatesRef.current.push(data.candidate);
+                  console.log('📝 Queued ICE candidate');
+                }
+              } catch (error) {
+                console.error('ICE candidate error:', error);
+              }
+            });
+          }
+        });
+      }
 
     } catch (error) {
       console.error('💥 Init error:', error);
