@@ -134,34 +134,93 @@ export default function RemoteControl() {
       });
 
       setStatus('Waiting for answer...');
+      console.log('👂 Listening for answer at path:', `signals/${targetId}/answer`);
 
-      // Listen for answer
-      const answerRef = ref(db, `signals/${targetId}/answer`);
-      onValue(answerRef, async (snapshot) => {
-        const data = snapshot.val();
-        if (data && data.signal) {
-          // Skip if already processed
-          if (pc.currentRemoteDescription) {
-            console.log('Answer already processed');
-            return;
-          }
-          
+      // Detect mobile
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      console.log('🔍 Device:', isMobile ? 'MOBILE' : 'DESKTOP');
+
+      if (isMobile) {
+        // MOBILE: Use HTTP polling (more reliable)
+        console.log('📱 Using HTTP polling for mobile');
+        const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+        let attempts = 0;
+        const maxAttempts = 60; // 60 seconds
+        
+        const pollForAnswer = async () => {
           try {
-            console.log('📥 Answer received');
-            await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+            attempts++;
+            console.log(`🔄 Poll attempt ${attempts}/${maxAttempts}`);
             
-            // Process pending ICE candidates
-            console.log('Processing pending candidates:', pendingCandidatesRef.current.length);
-            for (const candidate of pendingCandidatesRef.current) {
-              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            const response = await fetch(`${firebaseUrl}/signals/${targetId}/answer.json`);
+            const data = await response.json();
+            
+            if (data && data.signal) {
+              console.log('📥 Answer received via polling!');
+              
+              if (!pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+                console.log('✅ Remote description set');
+                
+                // Process pending ICE candidates
+                for (const candidate of pendingCandidatesRef.current) {
+                  await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                }
+                pendingCandidatesRef.current = [];
+              }
+            } else if (attempts < maxAttempts) {
+              // Poll again in 1 second
+              setTimeout(pollForAnswer, 1000);
+            } else {
+              console.error('❌ Timeout waiting for answer');
+              setStatus('Connection timeout');
             }
-            pendingCandidatesRef.current = [];
-            
           } catch (error) {
-            console.error('Error setting answer:', error);
+            console.error('❌ Polling error:', error);
+            if (attempts < maxAttempts) {
+              setTimeout(pollForAnswer, 1000);
+            }
           }
-        }
-      });
+        };
+        
+        pollForAnswer();
+        
+      } else {
+        // DESKTOP: Use real-time listener
+        console.log('🖥️ Using real-time listener for desktop');
+        const answerRef = ref(db, `signals/${targetId}/answer`);
+        onValue(answerRef, async (snapshot) => {
+          console.log('🔔 Answer snapshot received:', snapshot.exists());
+          const data = snapshot.val();
+          console.log('📦 Answer data:', data ? 'EXISTS' : 'NULL');
+          
+          if (data && data.signal) {
+            // Skip if already processed
+            if (pc.currentRemoteDescription) {
+              console.log('⏭️ Answer already processed');
+              return;
+            }
+            
+            try {
+              console.log('📥 Answer received - processing...');
+              await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+              console.log('✅ Remote description set');
+              
+              // Process pending ICE candidates
+              console.log('Processing pending candidates:', pendingCandidatesRef.current.length);
+              for (const candidate of pendingCandidatesRef.current) {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              }
+              pendingCandidatesRef.current = [];
+              
+            } catch (error) {
+              console.error('❌ Error setting answer:', error);
+            }
+          } else {
+            console.log('⏳ No answer data yet, waiting...');
+          }
+        });
+      }
 
       // Listen for sharer's ICE candidates
       const sharerCandidatesRef = ref(db, `signals/${targetId}/sharerCandidates`);
