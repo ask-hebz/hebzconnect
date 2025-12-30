@@ -13,26 +13,31 @@ export default function RemoteControl() {
   const peerConnectionRef = useRef(null);
   const pendingCandidatesRef = useRef([]);
   
-  const addDebugLog = (message) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setDebugInfo(prev => [...prev.slice(-5), `[${timestamp}] ${message}`]);
-  };
-  
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Initializing...');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
   const [debugInfo, setDebugInfo] = useState([]);
+  
+  const addDebugLog = (message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setDebugInfo(prev => [...prev.slice(-5), `[${timestamp}] ${message}`]);
+  };
 
   useEffect(() => {
     if (!targetPeerId && !code) return;
     
-    // Detect mobile FIRST
-    const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    addDebugLog(`🔍 Device: ${isMobileDevice ? 'MOBILE' : 'DESKTOP'}`);
-    
-    console.log('🚀 Starting remote viewer');
-    initConnection();
+    try {
+      // Detect mobile FIRST
+      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      addDebugLog(`🔍 Device: ${isMobileDevice ? 'MOBILE' : 'DESKTOP'}`);
+      
+      console.log('🚀 Starting remote viewer');
+      initConnection();
+    } catch (error) {
+      addDebugLog(`💥 INIT ERROR: ${error.message}`);
+      setStatus(`Error: ${error.message}`);
+    }
 
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
@@ -349,7 +354,7 @@ export default function RemoteControl() {
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-sm text-slate-300">{status}</span>
-              <span className="text-xs text-slate-600 ml-2">v3.2</span>
+              <span className="text-xs text-slate-600 ml-2">v3.3</span>
             </div>
 
             {hasVideo && (
