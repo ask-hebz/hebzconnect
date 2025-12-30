@@ -17,10 +17,23 @@ export default function RemoteControl() {
   const [hasVideo, setHasVideo] = useState(false);
 
   useEffect(() => {
-    if (!targetPeerId && !code) return;
+    if (!targetPeerId && !code) {
+      console.warn('⚠️ No peer ID or code provided');
+      return;
+    }
     
     console.log('🚀 Starting remote viewer for:', targetPeerId || code);
-    initConnection();
+    
+    // CRITICAL: Wait a bit to ensure video element is mounted
+    setTimeout(() => {
+      if (!videoRef.current) {
+        console.error('❌ Video element still not found after mount delay!');
+        setStatus('Error: Video element not available');
+        return;
+      }
+      console.log('✅ Video element confirmed:', videoRef.current);
+      initConnection();
+    }, 100);
 
     // Listen for fullscreen changes
     const handleFullscreenChange = () => {
@@ -38,6 +51,13 @@ export default function RemoteControl() {
   }, [targetPeerId, code]);
 
   const initConnection = async () => {
+    // Double-check video element exists
+    if (!videoRef.current) {
+      console.error('❌ CRITICAL: videoRef.current is null!');
+      setStatus('Video element not found!');
+      return;
+    }
+
     setStatus('Creating connection...');
 
     try {
@@ -58,90 +78,99 @@ export default function RemoteControl() {
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
-      // CRITICAL: Handle incoming stream with proper checks
+      // CRITICAL: Handle incoming stream with NULL checks
       pc.ontrack = (event) => {
         console.log('📺 Track received!');
-        console.log('  - Streams:', event.streams.length);
-        console.log('  - Track kind:', event.track.kind);
-        console.log('  - Track enabled:', event.track.enabled);
-        console.log('  - Track muted:', event.track.muted);
-        console.log('  - Track readyState:', event.track.readyState);
+        console.log('  - Streams:', event.streams?.length || 0);
+        console.log('  - Track kind:', event.track?.kind);
+        console.log('  - Track enabled:', event.track?.enabled);
+        console.log('  - Track readyState:', event.track?.readyState);
         
         setStatus('Screen sharing active');
         
-        if (event.streams && event.streams[0]) {
-          const stream = event.streams[0];
-          console.log('✅ Stream received:', stream.id);
-          console.log('  - Video tracks:', stream.getVideoTracks().length);
-          console.log('  - Audio tracks:', stream.getAudioTracks().length);
-          
-          if (videoRef.current) {
-            console.log('🎬 Setting video srcObject...');
-            videoRef.current.srcObject = stream;
-            
-            // Track video element events
-            videoRef.current.onloadedmetadata = () => {
-              console.log('📊 Video metadata loaded');
-              console.log('  - Video dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
-              setHasVideo(true);
-            };
-
-            videoRef.current.onloadeddata = () => {
-              console.log('📦 Video data loaded');
-            };
-
-            videoRef.current.onplay = () => {
-              console.log('▶️ Video playing');
-            };
-
-            videoRef.current.onerror = (e) => {
-              console.error('❌ Video error:', e);
-            };
-            
-            // Force play with multiple attempts
-            const attemptPlay = async (attempts = 0) => {
-              if (attempts >= 5) {
-                console.error('❌ Failed to play video after 5 attempts');
-                setStatus('Video playback failed - Please refresh');
-                return;
-              }
-
-              try {
-                console.log(`🎮 Play attempt ${attempts + 1}...`);
-                await videoRef.current.play();
-                console.log('✅ Video playing successfully!');
-                setHasVideo(true);
-              } catch (error) {
-                console.warn(`⚠️ Play attempt ${attempts + 1} failed:`, error.message);
-                
-                // Try different strategies
-                if (error.name === 'NotAllowedError') {
-                  console.log('🔇 Muting video and retrying...');
-                  videoRef.current.muted = true;
-                  setTimeout(() => attemptPlay(attempts + 1), 200);
-                } else if (error.name === 'NotSupportedError') {
-                  console.log('🔄 Trying to reload stream...');
-                  videoRef.current.load();
-                  setTimeout(() => attemptPlay(attempts + 1), 200);
-                } else {
-                  setTimeout(() => attemptPlay(attempts + 1), 500);
-                }
-              }
-            };
-
-            // Start play attempts after a short delay
-            setTimeout(() => attemptPlay(), 100);
-          } else {
-            console.error('❌ Video element not found!');
-          }
-        } else {
+        if (!event.streams || !event.streams[0]) {
           console.error('❌ No stream in track event!');
+          return;
         }
-      };
 
-      // Monitor track events
-      pc.onaddstream = (event) => {
-        console.log('➕ onaddstream (deprecated but may fire):', event);
+        const stream = event.streams[0];
+        console.log('✅ Stream received:', stream.id);
+        console.log('  - Video tracks:', stream.getVideoTracks().length);
+        
+        // CRITICAL: Check video element exists before using it
+        if (!videoRef.current) {
+          console.error('❌ Video element not found when trying to set srcObject!');
+          setStatus('Error: Video element unavailable');
+          return;
+        }
+
+        console.log('🎬 Setting video srcObject...');
+        videoRef.current.srcObject = stream;
+        
+        // Setup video element event handlers
+        videoRef.current.onloadedmetadata = () => {
+          console.log('📊 Video metadata loaded');
+          if (videoRef.current) {
+            console.log('  - Dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
+            setHasVideo(true);
+          }
+        };
+
+        videoRef.current.onloadeddata = () => {
+          console.log('📦 Video data loaded');
+        };
+
+        videoRef.current.onplay = () => {
+          console.log('▶️ Video playing');
+        };
+
+        videoRef.current.onerror = (e) => {
+          console.error('❌ Video error:', e);
+        };
+        
+        // Force play with retry logic
+        const attemptPlay = async (attempts = 0) => {
+          if (attempts >= 5) {
+            console.error('❌ Failed to play video after 5 attempts');
+            setStatus('Video playback failed - Please refresh');
+            return;
+          }
+
+          // Check video element still exists
+          if (!videoRef.current) {
+            console.error('❌ Video element disappeared during play attempts');
+            return;
+          }
+
+          try {
+            console.log(`🎮 Play attempt ${attempts + 1}...`);
+            await videoRef.current.play();
+            console.log('✅ Video playing successfully!');
+            setHasVideo(true);
+          } catch (error) {
+            console.warn(`⚠️ Play attempt ${attempts + 1} failed:`, error.message);
+            
+            if (!videoRef.current) {
+              console.error('❌ Video element lost during retry');
+              return;
+            }
+
+            if (error.name === 'NotAllowedError') {
+              console.log('🔇 Muting video and retrying...');
+              videoRef.current.muted = true;
+              setTimeout(() => attemptPlay(attempts + 1), 200);
+            } else if (error.name === 'NotSupportedError') {
+              console.log('🔄 Trying to reload stream...');
+              videoRef.current.load();
+              setTimeout(() => attemptPlay(attempts + 1), 200);
+            } else {
+              setTimeout(() => attemptPlay(attempts + 1), 500);
+            }
+          }
+        };
+
+        // Start play attempts after delay
+        setTimeout(() => attemptPlay(), 100);
       };
 
       // Connection state monitoring
@@ -180,13 +209,7 @@ export default function RemoteControl() {
         }
       };
 
-      // Signaling state
-      pc.onsignalingstatechange = () => {
-        console.log('📶 Signaling state:', pc.signalingState);
-      };
-
       console.log('📤 Creating offer...');
-      // Create offer with proper constraints
       const offer = await pc.createOffer({
         offerToReceiveVideo: true,
         offerToReceiveAudio: false
@@ -196,7 +219,7 @@ export default function RemoteControl() {
       await pc.setLocalDescription(offer);
       console.log('✅ Local description set');
 
-      // Wait for ICE gathering with timeout
+      // Wait for ICE gathering
       console.log('⏳ Waiting for ICE gathering...');
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') {
@@ -204,7 +227,6 @@ export default function RemoteControl() {
           resolve();
         } else {
           const checkState = () => {
-            console.log('  ICE state:', pc.iceGatheringState);
             if (pc.iceGatheringState === 'complete') {
               pc.removeEventListener('icegatheringstatechange', checkState);
               console.log('✅ ICE gathering completed');
@@ -213,7 +235,6 @@ export default function RemoteControl() {
           };
           pc.addEventListener('icegatheringstatechange', checkState);
           
-          // Timeout after 5 seconds
           setTimeout(() => {
             console.log('⏱️ ICE gathering timeout (proceeding anyway)');
             resolve();
@@ -315,7 +336,7 @@ export default function RemoteControl() {
           </button>
         </div>
 
-        {/* FIXED: Full screen video container */}
+        {/* Full screen video container */}
         <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 48px)' }}>
           {!hasVideo ? (
             <div className="text-center">
@@ -330,7 +351,7 @@ export default function RemoteControl() {
             </div>
           ) : (
             <div className="relative w-full h-full flex items-center justify-center p-4">
-              {/* FIXED: Full screen video with proper sizing */}
+              {/* Full screen video - ALWAYS RENDERED */}
               <video
                 ref={videoRef}
                 autoPlay
@@ -365,6 +386,21 @@ export default function RemoteControl() {
               )}
             </div>
           )}
+
+          {/* CRITICAL: Video element ALWAYS in DOM, hidden when not hasVideo */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{
+              display: hasVideo ? 'none' : 'none', // Hidden but exists in DOM
+              width: '1px',
+              height: '1px',
+              position: 'absolute',
+              opacity: 0
+            }}
+          />
         </div>
       </div>
     </>
