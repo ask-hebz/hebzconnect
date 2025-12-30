@@ -105,7 +105,7 @@ export default function ConnectStream() {
       setStatus('Requesting screen access...');
       console.log('🖥️ Requesting screen share permission...');
       
-      // Request screen share with optimal settings
+      // CRITICAL: Request screen FIRST before creating peer connection
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           cursor: 'always',
@@ -123,15 +123,21 @@ export default function ConnectStream() {
       console.log('  - Video tracks:', stream.getVideoTracks().length);
       console.log('  - Audio tracks:', stream.getAudioTracks().length);
       
-      // Check track details
-      stream.getVideoTracks().forEach((track, index) => {
-        console.log(`  - Video track ${index}:`, {
-          kind: track.kind,
-          label: track.label,
-          enabled: track.enabled,
-          muted: track.muted,
-          readyState: track.readyState
-        });
+      // Verify track details
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) {
+        console.error('❌ NO VIDEO TRACK AVAILABLE!');
+        setStatus('No video track available');
+        return;
+      }
+
+      console.log('📹 Video track details:', {
+        kind: videoTrack.kind,
+        label: videoTrack.label,
+        enabled: videoTrack.enabled,
+        muted: videoTrack.muted,
+        readyState: videoTrack.readyState,
+        id: videoTrack.id
       });
 
       streamRef.current = stream;
@@ -152,29 +158,58 @@ export default function ConnectStream() {
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
-      // CRITICAL: Add stream tracks to peer connection
-      console.log('📤 Adding tracks to peer connection...');
-      let trackCount = 0;
-      stream.getTracks().forEach(track => {
-        console.log(`  - Adding ${track.kind} track:`, track.label);
+      // CRITICAL FIX: Add tracks BEFORE setting remote description
+      console.log('📤 Adding tracks to peer connection FIRST...');
+      
+      stream.getTracks().forEach((track, index) => {
+        console.log(`  [${index}] Adding ${track.kind} track: ${track.label}`);
+        console.log(`      - ID: ${track.id}`);
+        console.log(`      - Enabled: ${track.enabled}`);
+        console.log(`      - ReadyState: ${track.readyState}`);
+        
         const sender = pc.addTrack(track, stream);
-        console.log(`    ✅ Track added, sender:`, sender);
-        trackCount++;
+        
+        console.log(`      ✅ Track added successfully`);
+        console.log(`      - Sender ID: ${sender.track?.id}`);
+        console.log(`      - Sender track type: ${sender.track?.kind}`);
       });
-      console.log(`✅ Total tracks added: ${trackCount}`);
 
-      // Verify senders
+      // Verify senders immediately
       const senders = pc.getSenders();
-      console.log('📡 Active senders:', senders.length);
+      console.log(`\n📡 Verification - Active senders: ${senders.length}`);
       senders.forEach((sender, index) => {
         if (sender.track) {
           console.log(`  Sender ${index}:`, {
+            trackId: sender.track.id,
             kind: sender.track.kind,
             enabled: sender.track.enabled,
-            readyState: sender.track.readyState
+            readyState: sender.track.readyState,
+            label: sender.track.label
           });
+        } else {
+          console.warn(`  Sender ${index}: NO TRACK!`);
         }
       });
+
+      if (senders.length === 0) {
+        console.error('❌ CRITICAL: No senders after adding tracks!');
+        setStatus('Failed to add video tracks');
+        return;
+      }
+
+      // NOW set remote description (offer)
+      console.log('\n📥 Setting remote description (offer)...');
+      await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
+      console.log('✅ Remote description set');
+
+      // Create answer
+      console.log('📤 Creating answer...');
+      const answer = await pc.createAnswer();
+      console.log('✅ Answer created');
+      console.log('   Answer SDP includes:', answer.sdp.includes('m=video') ? '✅ VIDEO' : '❌ NO VIDEO');
+      
+      await pc.setLocalDescription(answer);
+      console.log('✅ Local description set');
 
       // Monitor connection state
       pc.onconnectionstatechange = () => {
@@ -183,14 +218,19 @@ export default function ConnectStream() {
           setStatus('Connected - Controller is viewing your screen');
           setConnected(true);
           console.log('✅ Peer connection established!');
+          
+          // Re-verify senders after connection
+          const currentSenders = pc.getSenders();
+          console.log('📡 Current senders after connect:', currentSenders.length);
+          currentSenders.forEach((s, i) => {
+            console.log(`  Sender ${i}: ${s.track?.kind} - ${s.track?.readyState}`);
+          });
         } else if (pc.connectionState === 'disconnected') {
           setStatus('Disconnected');
           setConnected(false);
-          console.log('⚠️ Peer disconnected');
         } else if (pc.connectionState === 'failed') {
           setStatus('Connection failed');
           setConnected(false);
-          console.error('❌ Connection failed');
         }
       };
 
@@ -199,37 +239,12 @@ export default function ConnectStream() {
         console.log('🧊 ICE connection state:', pc.iceConnectionState);
       };
 
-      // ICE gathering state
-      pc.onicegatheringstatechange = () => {
-        console.log('📡 ICE gathering state:', pc.iceGatheringState);
+      // Monitor negotiation
+      pc.onnegotiationneeded = () => {
+        console.log('🔄 Negotiation needed');
       };
 
-      // ICE candidates
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          console.log('🧊 New ICE candidate:', event.candidate.type);
-        }
-      };
-
-      // Signaling state
-      pc.onsignalingstatechange = () => {
-        console.log('📶 Signaling state:', pc.signalingState);
-      };
-
-      // Set remote description (offer)
-      console.log('📥 Setting remote description (offer)...');
-      await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
-      console.log('✅ Remote description set');
-
-      // Create answer
-      console.log('📤 Creating answer...');
-      const answer = await pc.createAnswer();
-      console.log('✅ Answer created');
-      
-      await pc.setLocalDescription(answer);
-      console.log('✅ Local description set');
-
-      // Wait for ICE gathering to complete
+      // Wait for ICE gathering
       console.log('⏳ Waiting for ICE gathering...');
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') {
@@ -237,15 +252,13 @@ export default function ConnectStream() {
           resolve();
         } else {
           pc.addEventListener('icegatheringstatechange', () => {
-            console.log('  ICE state:', pc.iceGatheringState);
             if (pc.iceGatheringState === 'complete') {
               console.log('✅ ICE gathering completed');
               resolve();
             }
           });
-          // Timeout after 5 seconds
           setTimeout(() => {
-            console.log('⏱️ ICE timeout (proceeding anyway)');
+            console.log('⏱️ ICE timeout (proceeding)');
             resolve();
           }, 5000);
         }
@@ -262,24 +275,37 @@ export default function ConnectStream() {
           timestamp: Date.now()
         })
       });
-      console.log('✅ Answer sent to Firebase');
+      console.log('✅ Answer sent');
       setStatus('Connecting...');
 
-      // Track when screen sharing stops
-      stream.getVideoTracks()[0].onended = () => {
+      // Monitor track events
+      videoTrack.onended = () => {
         console.log('🛑 Screen sharing stopped by user');
         setStatus('Screen sharing stopped');
         if (pc) pc.close();
       };
 
-      // Monitor track events
-      stream.getVideoTracks()[0].onmute = () => {
+      videoTrack.onmute = () => {
         console.log('🔇 Video track muted');
       };
 
-      stream.getVideoTracks()[0].onunmute = () => {
+      videoTrack.onunmute = () => {
         console.log('🔊 Video track unmuted');
       };
+
+      // Debug: Log track state every 2 seconds
+      const trackMonitor = setInterval(() => {
+        if (videoTrack.readyState !== 'live') {
+          console.warn('⚠️ Track not live:', videoTrack.readyState);
+        }
+        const currentSenders = pc.getSenders();
+        if (currentSenders.length === 0) {
+          console.error('❌ No senders detected!');
+        }
+      }, 2000);
+
+      // Cleanup monitor
+      setTimeout(() => clearInterval(trackMonitor), 30000);
 
     } catch (error) {
       if (error.name === 'NotAllowedError') {
