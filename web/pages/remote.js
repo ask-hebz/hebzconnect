@@ -139,7 +139,13 @@ export default function RemoteControl() {
       const answerRef = ref(db, `signals/${targetId}/answer`);
       onValue(answerRef, async (snapshot) => {
         const data = snapshot.val();
-        if (data && data.signal && pc.signalingState !== 'stable') {
+        if (data && data.signal) {
+          // Skip if already processed
+          if (pc.currentRemoteDescription) {
+            console.log('Answer already processed');
+            return;
+          }
+          
           try {
             console.log('📥 Answer received');
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
