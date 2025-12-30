@@ -167,6 +167,48 @@ export default function RemoteControl() {
         console.log('📱 Using HTTP polling for mobile');
         addDebugLog('📱 Mobile detected - using HTTP polling');
         const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+        
+        // Start ICE candidate polling IMMEDIATELY
+        addDebugLog('📡 Starting ICE candidate polling...');
+        const pollForCandidates = async () => {
+          try {
+            const response = await fetch(`${firebaseUrl}/signals/${targetId}/sharerCandidates.json`);
+            const candidates = await response.json();
+            
+            if (candidates) {
+              const candidateCount = Object.keys(candidates).length;
+              addDebugLog(`🧊 Found ${candidateCount} ICE candidates`);
+              
+              for (const data of Object.values(candidates)) {
+                try {
+                  if (pc.remoteDescription) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    console.log('✅ Added ICE candidate');
+                  } else {
+                    pendingCandidatesRef.current.push(data.candidate);
+                  }
+                } catch (error) {
+                  console.error('ICE candidate error:', error);
+                }
+              }
+            }
+            
+            // Keep polling for new candidates
+            if (pc && pc.connectionState !== 'closed') {
+              setTimeout(pollForCandidates, 2000);
+            }
+          } catch (error) {
+            console.error('Candidate polling error:', error);
+            if (pc && pc.connectionState !== 'closed') {
+              setTimeout(pollForCandidates, 2000);
+            }
+          }
+        };
+        
+        // Start ICE polling NOW
+        pollForCandidates();
+        
+        // THEN start answer polling
         let attempts = 0;
         const maxAttempts = 60; // 60 seconds
         
@@ -255,47 +297,8 @@ export default function RemoteControl() {
       // Listen for sharer's ICE candidates
       const sharerCandidatesRef = ref(db, `signals/${targetId}/sharerCandidates`);
       
-      if (isMobile) {
-        // MOBILE: Poll for ICE candidates via HTTP
-        addDebugLog('📡 Polling for ICE candidates...');
-        const pollForCandidates = async () => {
-          try {
-            const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
-            const response = await fetch(`${firebaseUrl}/signals/${targetId}/sharerCandidates.json`);
-            const candidates = await response.json();
-            
-            if (candidates) {
-              const candidateCount = Object.keys(candidates).length;
-              addDebugLog(`🧊 Found ${candidateCount} ICE candidates`);
-              
-              for (const data of Object.values(candidates)) {
-                try {
-                  if (pc.remoteDescription) {
-                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                    console.log('✅ Added ICE candidate');
-                  } else {
-                    pendingCandidatesRef.current.push(data.candidate);
-                  }
-                } catch (error) {
-                  console.error('ICE candidate error:', error);
-                }
-              }
-            }
-            
-            // Keep polling for new candidates
-            if (pc && pc.connectionState !== 'closed') {
-              setTimeout(pollForCandidates, 2000);
-            }
-          } catch (error) {
-            console.error('Candidate polling error:', error);
-            setTimeout(pollForCandidates, 2000);
-          }
-        };
-        
-        pollForCandidates();
-        
-      } else {
-        // DESKTOP: Use real-time listener
+      if (!isMobile) {
+        // DESKTOP: Use real-time listener for ICE candidates
         onValue(sharerCandidatesRef, (snapshot) => {
           const candidates = snapshot.val();
           if (candidates) {
@@ -354,7 +357,7 @@ export default function RemoteControl() {
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-sm text-slate-300">{status}</span>
-              <span className="text-xs text-slate-600 ml-2">v3.3</span>
+              <span className="text-xs text-slate-600 ml-2">v3.4</span>
             </div>
 
             {hasVideo && (
