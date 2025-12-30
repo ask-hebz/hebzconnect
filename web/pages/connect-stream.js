@@ -120,6 +120,11 @@ export default function ConnectStream() {
       setStatus('Screen capture started');
 
       // Create peer connection
+      console.log('🔧 Creating peer connection');
+      
+      // Detect mobile  
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -128,12 +133,14 @@ export default function ConnectStream() {
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' }
         ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require'
+        iceCandidatePoolSize: 10
       };
-
-      console.log('🔧 Creating peer connection');
+      
+      // Only use max-bundle on desktop
+      if (!isMobile) {
+        configuration.bundlePolicy = 'max-bundle';
+        configuration.rtcpMuxPolicy = 'require';
+      }
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
