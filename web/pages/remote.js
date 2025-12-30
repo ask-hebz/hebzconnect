@@ -14,10 +14,12 @@ export default function RemoteControl() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Initializing...');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [hasVideo, setHasVideo] = useState(false);
 
   useEffect(() => {
     if (!targetPeerId && !code) return;
     
+    console.log('🚀 Starting remote viewer for:', targetPeerId || code);
     initConnection();
 
     // Listen for fullscreen changes
@@ -27,6 +29,7 @@ export default function RemoteControl() {
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
     return () => {
+      console.log('🧹 Cleaning up connection...');
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
@@ -41,80 +44,186 @@ export default function RemoteControl() {
       const targetId = targetPeerId || code;
       const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
 
+      console.log('🔧 Creating RTCPeerConnection...');
       const configuration = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:global.stun.twilio.com:3478' }
-        ]
+        ],
+        iceCandidatePoolSize: 10
       };
 
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
 
-      // CRITICAL: Handle incoming stream
+      // CRITICAL: Handle incoming stream with proper checks
       pc.ontrack = (event) => {
-        console.log('📺 Track received:', event.streams[0]);
+        console.log('📺 Track received!');
+        console.log('  - Streams:', event.streams.length);
+        console.log('  - Track kind:', event.track.kind);
+        console.log('  - Track enabled:', event.track.enabled);
+        console.log('  - Track muted:', event.track.muted);
+        console.log('  - Track readyState:', event.track.readyState);
+        
         setStatus('Screen sharing active');
         
-        if (videoRef.current && event.streams[0]) {
-          videoRef.current.srcObject = event.streams[0];
+        if (event.streams && event.streams[0]) {
+          const stream = event.streams[0];
+          console.log('✅ Stream received:', stream.id);
+          console.log('  - Video tracks:', stream.getVideoTracks().length);
+          console.log('  - Audio tracks:', stream.getAudioTracks().length);
           
-          // FORCE VIDEO TO PLAY
-          setTimeout(() => {
-            if (videoRef.current) {
-              videoRef.current.play()
-                .then(() => console.log('✅ Video playing!'))
-                .catch(e => {
-                  console.error('❌ Play failed:', e);
-                  // Try unmuting and playing again
+          if (videoRef.current) {
+            console.log('🎬 Setting video srcObject...');
+            videoRef.current.srcObject = stream;
+            
+            // Track video element events
+            videoRef.current.onloadedmetadata = () => {
+              console.log('📊 Video metadata loaded');
+              console.log('  - Video dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
+              setHasVideo(true);
+            };
+
+            videoRef.current.onloadeddata = () => {
+              console.log('📦 Video data loaded');
+            };
+
+            videoRef.current.onplay = () => {
+              console.log('▶️ Video playing');
+            };
+
+            videoRef.current.onerror = (e) => {
+              console.error('❌ Video error:', e);
+            };
+            
+            // Force play with multiple attempts
+            const attemptPlay = async (attempts = 0) => {
+              if (attempts >= 5) {
+                console.error('❌ Failed to play video after 5 attempts');
+                setStatus('Video playback failed - Please refresh');
+                return;
+              }
+
+              try {
+                console.log(`🎮 Play attempt ${attempts + 1}...`);
+                await videoRef.current.play();
+                console.log('✅ Video playing successfully!');
+                setHasVideo(true);
+              } catch (error) {
+                console.warn(`⚠️ Play attempt ${attempts + 1} failed:`, error.message);
+                
+                // Try different strategies
+                if (error.name === 'NotAllowedError') {
+                  console.log('🔇 Muting video and retrying...');
                   videoRef.current.muted = true;
-                  videoRef.current.play().catch(err => console.error('Retry failed:', err));
-                });
-            }
-          }, 100);
+                  setTimeout(() => attemptPlay(attempts + 1), 200);
+                } else if (error.name === 'NotSupportedError') {
+                  console.log('🔄 Trying to reload stream...');
+                  videoRef.current.load();
+                  setTimeout(() => attemptPlay(attempts + 1), 200);
+                } else {
+                  setTimeout(() => attemptPlay(attempts + 1), 500);
+                }
+              }
+            };
+
+            // Start play attempts after a short delay
+            setTimeout(() => attemptPlay(), 100);
+          } else {
+            console.error('❌ Video element not found!');
+          }
+        } else {
+          console.error('❌ No stream in track event!');
         }
       };
 
+      // Monitor track events
+      pc.onaddstream = (event) => {
+        console.log('➕ onaddstream (deprecated but may fire):', event);
+      };
+
+      // Connection state monitoring
       pc.onconnectionstatechange = () => {
-        console.log('Connection state:', pc.connectionState);
+        console.log('🔄 Connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           setStatus('Connected');
           setConnected(true);
-        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        } else if (pc.connectionState === 'disconnected') {
           setStatus('Disconnected');
           setConnected(false);
+          setHasVideo(false);
+        } else if (pc.connectionState === 'failed') {
+          setStatus('Connection failed - Please refresh');
+          setConnected(false);
+          setHasVideo(false);
         }
       };
 
-      // Create offer
+      // ICE connection state
+      pc.oniceconnectionstatechange = () => {
+        console.log('🧊 ICE connection state:', pc.iceConnectionState);
+      };
+
+      // ICE gathering state
+      pc.onicegatheringstatechange = () => {
+        console.log('📡 ICE gathering state:', pc.iceGatheringState);
+      };
+
+      // ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log('🧊 New ICE candidate:', event.candidate.type);
+        } else {
+          console.log('✅ ICE gathering complete');
+        }
+      };
+
+      // Signaling state
+      pc.onsignalingstatechange = () => {
+        console.log('📶 Signaling state:', pc.signalingState);
+      };
+
+      console.log('📤 Creating offer...');
+      // Create offer with proper constraints
       const offer = await pc.createOffer({
         offerToReceiveVideo: true,
         offerToReceiveAudio: false
       });
       
+      console.log('✅ Offer created');
       await pc.setLocalDescription(offer);
+      console.log('✅ Local description set');
 
-      // Wait for ICE gathering
+      // Wait for ICE gathering with timeout
+      console.log('⏳ Waiting for ICE gathering...');
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') {
+          console.log('✅ ICE already complete');
           resolve();
         } else {
           const checkState = () => {
+            console.log('  ICE state:', pc.iceGatheringState);
             if (pc.iceGatheringState === 'complete') {
               pc.removeEventListener('icegatheringstatechange', checkState);
+              console.log('✅ ICE gathering completed');
               resolve();
             }
           };
           pc.addEventListener('icegatheringstatechange', checkState);
           
-          // Timeout after 3 seconds
-          setTimeout(resolve, 3000);
+          // Timeout after 5 seconds
+          setTimeout(() => {
+            console.log('⏱️ ICE gathering timeout (proceeding anyway)');
+            resolve();
+          }, 5000);
         }
       });
 
       // Send offer
       setStatus('Sending connection request...');
+      console.log('📤 Sending offer to Firebase...');
       
       await fetch(`${firebaseUrl}/signals/${targetId}/offer.json`, {
         method: 'PUT',
@@ -126,28 +235,36 @@ export default function RemoteControl() {
         })
       });
 
+      console.log('✅ Offer sent');
+      setStatus('Waiting for peer to accept...');
+
       // Listen for answer
+      console.log('👂 Listening for answer...');
       const answerRef = ref(db, `signals/${targetId}/answer`);
       const unsubscribe = onValue(answerRef, async (snapshot) => {
         const data = snapshot.val();
         if (data && data.signal) {
           try {
+            console.log('📥 Answer received!');
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
-            console.log('✅ Answer set successfully');
+            console.log('✅ Remote description set successfully');
+            setStatus('Establishing connection...');
             off(answerRef);
           } catch (error) {
-            console.error('❌ Error setting answer:', error);
+            console.error('❌ Error setting remote description:', error);
+            setStatus('Connection setup failed');
           }
         }
       });
 
     } catch (error) {
       setStatus('Connection failed: ' + error.message);
-      console.error('Init error:', error);
+      console.error('💥 Init error:', error);
     }
   };
 
   const disconnect = () => {
+    console.log('👋 Disconnecting...');
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
     }
@@ -181,6 +298,13 @@ export default function RemoteControl() {
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-sm text-slate-300">{status}</span>
             </div>
+
+            {hasVideo && (
+              <div className="flex items-center space-x-2 text-xs text-green-400">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                <span>Video Active</span>
+              </div>
+            )}
           </div>
           
           <button
@@ -193,13 +317,16 @@ export default function RemoteControl() {
 
         {/* FIXED: Full screen video container */}
         <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 48px)' }}>
-          {!connected ? (
+          {!hasVideo ? (
             <div className="text-center">
               <svg className="animate-spin h-12 w-12 text-blue-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
               </svg>
-              <p className="text-slate-400">{status}</p>
+              <p className="text-slate-400 mb-2">{status}</p>
+              {connected && !hasVideo && (
+                <p className="text-yellow-400 text-sm">Waiting for video stream...</p>
+              )}
             </div>
           ) : (
             <div className="relative w-full h-full flex items-center justify-center p-4">
@@ -214,9 +341,10 @@ export default function RemoteControl() {
                   height: '100%',
                   maxWidth: '100%',
                   maxHeight: '100%',
-                  objectFit: 'contain' 
+                  objectFit: 'contain',
+                  backgroundColor: '#1a1a2e'
                 }}
-                className="rounded-lg shadow-2xl bg-slate-900"
+                className="rounded-lg shadow-2xl"
               />
               
               {/* Viewing indicator */}
