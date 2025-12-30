@@ -13,10 +13,16 @@ export default function RemoteControl() {
   const peerConnectionRef = useRef(null);
   const pendingCandidatesRef = useRef([]);
   
+  const addDebugLog = (message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setDebugInfo(prev => [...prev.slice(-5), `[${timestamp}] ${message}`]);
+  };
+  
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Initializing...');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
+  const [debugInfo, setDebugInfo] = useState([]);
 
   useEffect(() => {
     if (!targetPeerId && !code) return;
@@ -143,6 +149,7 @@ export default function RemoteControl() {
       if (isMobile) {
         // MOBILE: Use HTTP polling (more reliable)
         console.log('📱 Using HTTP polling for mobile');
+        addDebugLog('📱 Mobile detected - using HTTP polling');
         const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
         let attempts = 0;
         const maxAttempts = 60; // 60 seconds
@@ -151,16 +158,21 @@ export default function RemoteControl() {
           try {
             attempts++;
             console.log(`🔄 Poll attempt ${attempts}/${maxAttempts}`);
+            addDebugLog(`🔄 Polling... (${attempts}/${maxAttempts})`);
             
             const response = await fetch(`${firebaseUrl}/signals/${targetId}/answer.json`);
             const data = await response.json();
             
+            addDebugLog(`📦 Response: ${data ? 'Data received' : 'No data'}`);
+            
             if (data && data.signal) {
               console.log('📥 Answer received via polling!');
+              addDebugLog('✅ Answer received!');
               
               if (!pc.currentRemoteDescription) {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
                 console.log('✅ Remote description set');
+                addDebugLog('✅ Connection established');
                 
                 // Process pending ICE candidates
                 for (const candidate of pendingCandidatesRef.current) {
@@ -173,10 +185,12 @@ export default function RemoteControl() {
               setTimeout(pollForAnswer, 1000);
             } else {
               console.error('❌ Timeout waiting for answer');
+              addDebugLog('❌ Timeout - no answer received');
               setStatus('Connection timeout');
             }
           } catch (error) {
             console.error('❌ Polling error:', error);
+            addDebugLog(`❌ Error: ${error.message}`);
             if (attempts < maxAttempts) {
               setTimeout(pollForAnswer, 1000);
             }
@@ -320,6 +334,30 @@ export default function RemoteControl() {
                 margin: '0 auto 20px'
               }}></div>
               <p>{status}</p>
+              
+              {/* Debug Info for Mobile */}
+              {debugInfo.length > 0 && (
+                <div style={{
+                  marginTop: '30px',
+                  backgroundColor: 'rgba(0,0,0,0.8)',
+                  padding: '15px',
+                  borderRadius: '10px',
+                  maxWidth: '90%',
+                  margin: '30px auto 0',
+                  textAlign: 'left',
+                  fontSize: '12px',
+                  fontFamily: 'monospace'
+                }}>
+                  <div style={{ color: '#00ff00', marginBottom: '10px', fontWeight: 'bold' }}>
+                    📊 Debug Log:
+                  </div>
+                  {debugInfo.map((log, i) => (
+                    <div key={i} style={{ color: '#00ff00', marginBottom: '5px' }}>
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           
