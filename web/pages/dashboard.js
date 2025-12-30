@@ -10,11 +10,33 @@ export default function Dashboard() {
     router.push('/connect-stream');
   };
 
-  const handleViewScreen = () => {
+  const handleViewScreen = async () => {
     const code = prompt('Enter the 6-digit connection code (e.g., ABC-123):');
     if (code) {
       const cleanCode = code.trim().toUpperCase();
-      router.push(`/remote?code=${cleanCode}`);
+      
+      // Lookup peer ID from code via Firebase
+      try {
+        const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+        const response = await fetch(`${firebaseUrl}/peers.json`);
+        const peers = await response.json();
+        
+        // Find peer with matching code
+        const peerEntry = Object.entries(peers || {}).find(
+          ([id, data]) => data.code === cleanCode && data.online
+        );
+        
+        if (peerEntry) {
+          const [peerId, peerData] = peerEntry;
+          console.log('Found peer:', peerId, 'for code:', cleanCode);
+          router.push(`/remote?peer=${peerId}`);
+        } else {
+          alert(`Code "${cleanCode}" not found or offline. Please check the code and try again.`);
+        }
+      } catch (error) {
+        console.error('Error looking up code:', error);
+        alert('Error connecting. Please try again.');
+      }
     }
   };
 
