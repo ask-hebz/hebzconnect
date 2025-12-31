@@ -33,87 +33,96 @@ export default function MobileViewer() {
   }, [targetPeerId, code]);
 
   const init = async () => {
-    const targetId = targetPeerId || code;
-    log('📱 Mobile Viewer Started');
-    log(`🔗 Connecting to: ${targetId}`);
+    try {
+      const targetId = targetPeerId || code;
+      log('📱 Mobile Viewer Started');
+      log(`🔗 Connecting to: ${targetId}`);
 
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ],
+        iceTransportPolicy: 'relay',
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
+      });
+
+      pcRef.current = pc;
+
+      // MOBILE-SAFE TRACK HANDLER (NO AUTOPLAY!)
+      pc.ontrack = (e) => {
+        log('📺 Track received');
+        const video = videoRef.current;
+        if (!video || !e.streams[0]) return;
+
+        video.srcObject = e.streams[0];
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = false; // CRITICAL: Do NOT autoplay on mobile!
+
+        setHasStream(true);
+        setStatus('Tap to start video');
+        log('✅ Video track ready - waiting for user tap');
+      };
+
+      // Debug states for Safari
+      pc.oniceconnectionstatechange = () =>
+        log(`🧊 ICE: ${pc.iceConnectionState}`);
+
+      pc.onconnectionstatechange = () => {
+        log(`🔗 Connection: ${pc.connectionState}`);
+        if (pc.connectionState === 'connected') {
+          log('✅ Connection established');
         }
-      ],
-      iceTransportPolicy: 'relay',
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require'
-    });
+      };
 
-    pcRef.current = pc;
+      // Send our ICE candidates
+      pc.onicecandidate = (e) => {
+        if (!e.candidate) return;
+        set(ref(db, `signals/${targetId}/viewerCandidates/${Date.now()}`), {
+          candidate: e.candidate.toJSON(),
+          timestamp: Date.now()
+        }).catch(err => log(`❌ ICE send error: ${err.message}`));
+      };
 
-    // MOBILE-SAFE TRACK HANDLER (NO AUTOPLAY!)
-    pc.ontrack = (e) => {
-      log('📺 Track received');
-      const video = videoRef.current;
-      if (!video || !e.streams[0]) return;
+      // Create and send offer
+      log('📤 Creating offer...');
+      const offer = await pc.createOffer({ 
+        offerToReceiveVideo: true,
+        offerToReceiveAudio: false
+      });
+      log('✅ Offer created');
+      
+      await pc.setLocalDescription(offer);
+      log('✅ Local description set');
 
-      video.srcObject = e.streams[0];
-      video.muted = true;
-      video.playsInline = true;
-      video.autoplay = false; // CRITICAL: Do NOT autoplay on mobile!
-
-      setHasStream(true);
-      setStatus('Tap to start video');
-      log('✅ Video track ready - waiting for user tap');
-    };
-
-    // Debug states for Safari
-    pc.oniceconnectionstatechange = () =>
-      log(`🧊 ICE: ${pc.iceConnectionState}`);
-
-    pc.onconnectionstatechange = () => {
-      log(`🔗 Connection: ${pc.connectionState}`);
-      if (pc.connectionState === 'connected') {
-        log('✅ Connection established');
-      }
-    };
-
-    // Send our ICE candidates
-    pc.onicecandidate = (e) => {
-      if (!e.candidate) return;
-      set(ref(db, `signals/${targetId}/viewerCandidates/${Date.now()}`), {
-        candidate: e.candidate.toJSON(),
+      log('📤 Sending offer via Firebase SDK');
+      await set(ref(db, `signals/${targetId}/offer`), {
+        signal: pc.localDescription.toJSON(),
+        from: 'mobile-viewer',
         timestamp: Date.now()
       });
-    };
-
-    // Create and send offer
-    log('📤 Creating offer...');
-    const offer = await pc.createOffer({ 
-      offerToReceiveVideo: true,
-      offerToReceiveAudio: false
-    });
-    await pc.setLocalDescription(offer);
-
-    log('📤 Sending offer via Firebase SDK');
-    await set(ref(db, `signals/${targetId}/offer`), {
-      signal: pc.localDescription.toJSON(),
-      from: 'mobile-viewer',
-      timestamp: Date.now()
-    });
-    
-    log('📤 Offer sent');
-    setStatus('Waiting for answer...');
-    
-    // Start polling
-    pollAnswer(pc, targetId);
-    pollCandidates(pc, targetId);
+      
+      log('✅ Offer sent successfully');
+      setStatus('Waiting for answer...');
+      
+      // Start polling
+      pollAnswer(pc, targetId);
+      pollCandidates(pc, targetId);
+    } catch (error) {
+      log(`❌ INIT ERROR: ${error.message}`);
+      log(`❌ Stack: ${error.stack}`);
+      setStatus(`Error: ${error.message}`);
+    }
   };
 
   // ANSWER POLLING WITH ICE QUEUE FLUSH
