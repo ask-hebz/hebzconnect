@@ -98,7 +98,7 @@ export default function Dashboard() {
             <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-3">
               HebzConnect
             </h1>
-            <p className="text-slate-400 text-lg">Professional Remote Screen Sharing</p>
+            <p className="text-slate-400 text-lg">Remote Screen Sharing</p>
           </div>
 
           {/* Main Action Cards */}
