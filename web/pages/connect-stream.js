@@ -131,8 +131,8 @@ export default function ConnectStream() {
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' }
-        ],
-        iceCandidatePoolSize: 10
+        ]
+        // Removed iceCandidatePoolSize - it was preventing ICE gathering from starting
       };
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
