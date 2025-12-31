@@ -123,10 +123,10 @@ export default function MobileViewer() {
 
       // Start ICE polling IMMEDIATELY (don't wait for answer)
       addLog('🔄 Starting ICE candidate polling...');
-      pollForCandidates(pc, targetId, firebaseUrl);
+      pollForCandidates(pc, targetId);
 
       // Poll for answer
-      pollForAnswer(pc, targetId, firebaseUrl);
+      pollForAnswer(pc, targetId);
 
       // Send our ICE candidates via Firebase SDK
       pc.onicecandidate = (event) => {
@@ -144,7 +144,8 @@ export default function MobileViewer() {
     }
   };
 
-  const pollForAnswer = async (pc, targetId, firebaseUrl) => {
+  const pollForAnswer = async (pc, targetId) => {
+    const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
     let attempts = 0;
     const maxAttempts = 60;
 
@@ -180,7 +181,8 @@ export default function MobileViewer() {
     poll();
   };
 
-  const pollForCandidates = async (pc, targetId, firebaseUrl) => {
+  const pollForCandidates = async (pc, targetId) => {
+    const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
     let pollCount = 0;
     
     const poll = async () => {
