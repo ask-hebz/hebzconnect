@@ -42,12 +42,10 @@ export default function MobileViewer() {
       const targetId = targetPeerId || code;
       addLog(`🔗 Connecting to: ${targetId}`);
       
-      // Simple peer connection config with TURN for mobile
+      // Force TURN relay for mobile - bypass NAT completely
       const pc = new RTCPeerConnection({
         iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          // FREE TURN server for mobile NAT traversal
+          // Only TURN servers for relay - no STUN
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -63,7 +61,8 @@ export default function MobileViewer() {
             username: 'openrelayproject',
             credential: 'openrelayproject'
           }
-        ]
+        ],
+        iceTransportPolicy: 'relay' // CRITICAL: Force relay only!
       });
       
       peerConnectionRef.current = pc;
