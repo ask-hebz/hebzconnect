@@ -1,206 +1,152 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { ref, onValue, set, off } from 'firebase/database';
-import { db } from '../lib/firebase';
+import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
+import { app } from '../lib/firebase';
+
+const db = getDatabase(app);
 
 export default function ConnectStream() {
   const router = useRouter();
+  const [id, setId] = useState('');
   const [code, setCode] = useState('');
-  const [status, setStatus] = useState('Generating code...');
-  const [peerId, setPeerId] = useState('');
+  const [status, setStatus] = useState('Initializing...');
   const [connected, setConnected] = useState(false);
-  const peerConnectionRef = useRef(null);
+  
   const streamRef = useRef(null);
+  const peerConnectionRef = useRef(null);
   const hasAnsweredRef = useRef(false);
-  const pendingCandidatesRef = useRef([]);
 
   useEffect(() => {
-    console.log('🚀 Init connect stream');
-    generateCodeAndStart();
-    
-    return () => {
-      cleanup();
-    };
+    initializeConnection();
+    return () => cleanup();
   }, []);
 
-  const cleanup = () => {
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-    }
-  };
+  const initializeConnection = async () => {
+    const peerId = `PC-${Math.random().toString(36).substring(2, 10)}`;
+    const accessCode = generateCode();
+    
+    setId(peerId);
+    setCode(accessCode);
 
-  const generateCodeAndStart = async () => {
-    const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const formattedCode = `${randomCode.substring(0, 3)}-${randomCode.substring(3, 6)}`;
-    setCode(formattedCode);
+    // Register in peers list
+    await set(ref(db, `peers/${peerId}`), {
+      id: peerId,
+      code: accessCode,
+      hostname: window.location.hostname || 'Desktop',
+      lastSeen: Date.now()
+    });
 
-    const id = `PC-${Date.now().toString(36)}`;
-    setPeerId(id);
-    console.log('🆔 ID:', id, 'Code:', formattedCode);
-
-    try {
-      const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
-      
-      await fetch(`${firebaseUrl}/peers/${id}.json`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          online: true,
-          lastSeen: Date.now(),
-          hostname: `Guest-${formattedCode}`,
-          code: formattedCode
-        })
-      });
-
-      setStatus('Ready - Share your code');
-      startHeartbeat(id, formattedCode);
-      listenForConnection(id);
-    } catch (error) {
-      setStatus('Connection failed');
-      console.error('Registration error:', error);
-    }
-  };
-
-  const startHeartbeat = (id, codeStr) => {
-    setInterval(async () => {
-      try {
-        const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
-        await fetch(`${firebaseUrl}/peers/${id}.json`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            online: true,
-            lastSeen: Date.now(),
-            hostname: `Guest-${codeStr}`,
-            code: codeStr
-          })
-        });
-      } catch (error) {
-        console.error('Heartbeat failed');
-      }
+    // Heartbeat
+    const interval = setInterval(() => {
+      set(ref(db, `peers/${peerId}/lastSeen`), Date.now());
     }, 10000);
+
+    // Listen for offers
+    listenForOffers(peerId);
+
+    return () => {
+      clearInterval(interval);
+      remove(ref(db, `peers/${peerId}`));
+    };
   };
 
-  const listenForConnection = (id) => {
-    console.log('👂 Listening for offer');
-    const offerRef = ref(db, `signals/${id}/offer`);
+  const generateCode = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return Array(3).fill(0).map(() => chars[Math.floor(Math.random() * chars.length)]).join('') + '-' +
+           Array(3).fill(0).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
+  };
+
+  const listenForOffers = (peerId) => {
+    console.log('👂 Listening for offers on:', peerId);
+    const offerRef = ref(db, `signals/${peerId}/offer`);
     
     onValue(offerRef, async (snapshot) => {
       const data = snapshot.val();
       if (data && !hasAnsweredRef.current) {
-        console.log('📥 Offer received');
+        console.log('📥 Offer received from:', data.from || 'viewer');
         hasAnsweredRef.current = true;
         setStatus('Incoming connection...');
-        await handleOffer(data, id);
+        await handleOffer(data, peerId);
       }
     });
   };
 
-  const handleOffer = async (offerData, id) => {
+  const handleOffer = async (offerData, peerId) => {
     try {
-      setStatus('Requesting screen...');
-      console.log('🖥️ Requesting screen share');
-      
-      // Get screen FIRST
+      console.log('📥 Processing offer');
+      setStatus('Requesting screen share...');
+
+      // Get screen
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          cursor: 'always',
-          displaySurface: 'monitor',
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 30, max: 30 }
-        },
+        video: { cursor: 'always' },
         audio: false
       });
 
       console.log('✅ Screen granted');
       streamRef.current = stream;
-      setStatus('Screen capture started');
+      setStatus('Setting up connection...');
 
-      // Create peer connection
-      console.log('🔧 Creating peer connection');
-      
-      const configuration = {
+      // CRITICAL: Create peer connection with SIMPLE config for mobile
+      const pc = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          // FREE TURN server for mobile NAT traversal
-          {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
           {
             urls: 'turn:openrelay.metered.ca:443',
             username: 'openrelayproject',
             credential: 'openrelayproject'
           },
           {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
             credential: 'openrelayproject'
           }
-        ],
-        iceTransportPolicy: 'all' // Allow both direct and relay
-      };
-      const pc = new RTCPeerConnection(configuration);
+        ]
+        // NO iceTransportPolicy - let it choose
+        // NO bundlePolicy - keep it simple
+      });
+
       peerConnectionRef.current = pc;
 
-      // Add tracks FIRST
-      console.log('📤 Adding tracks');
+      // Add tracks FIRST (before setting remote description)
+      console.log('📤 Adding video track');
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream);
         console.log('✅ Track added:', track.kind);
       });
-      
-      // CRITICAL: Add a data channel to ensure ICE gathering starts
-      // Some browsers don't start ICE gathering without at least one data channel or negotiated connection
-      console.log('📡 Creating data channel to trigger ICE gathering');
-      const dataChannel = pc.createDataChannel('dummy');
-      console.log('✅ Data channel created');
 
-      // ICE candidates - CRITICAL FOR MOBILE!
-      console.log('🔧 Setting up ICE candidate handler');
-      let iceGatheringComplete = false;
-      
+      // ICE candidate handler - CRITICAL FOR MOBILE!
       pc.onicecandidate = (event) => {
-        console.log('🎯 onicecandidate event fired!', event.candidate ? 'HAS CANDIDATE' : 'NULL');
-        
         if (event.candidate) {
-          console.log('🧊 Sending ICE candidate to Firebase');
-          console.log('   Path:', `signals/${id}/sharerCandidates/${Date.now()}`);
-          console.log('   Candidate:', event.candidate);
+          console.log('🧊 ICE candidate generated!');
+          console.log('   Type:', event.candidate.type);
+          console.log('   Protocol:', event.candidate.protocol);
           
-          set(ref(db, `signals/${id}/sharerCandidates/${Date.now()}`), {
+          set(ref(db, `signals/${peerId}/sharerCandidates/${Date.now()}`), {
             candidate: event.candidate.toJSON(),
             timestamp: Date.now()
           }).then(() => {
-            console.log('✅ ICE candidate sent successfully');
+            console.log('✅ ICE candidate sent to Firebase');
           }).catch(err => {
-            console.error('❌ Failed to send ICE candidate:', err);
+            console.error('❌ Failed to send ICE:', err);
           });
         } else {
-          console.log('✅ All ICE candidates sent (gathering complete)');
-          iceGatheringComplete = true;
+          console.log('✅ ICE gathering complete (null candidate)');
         }
       };
-      
-      pc.onicegatheringstatechange = () => {
-        console.log('📡 ICE gathering state:', pc.iceGatheringState);
-      };
-      
-      console.log('✅ ICE candidate handler registered');
 
-      // Connection state
+      // ICE gathering state - VERBOSE
+      pc.onicegatheringstatechange = () => {
+        console.log('📡 ICE gathering state changed:', pc.iceGatheringState);
+      };
+
+      // Connection states
+      pc.oniceconnectionstatechange = () => {
+        console.log('🧊 ICE connection state:', pc.iceConnectionState);
+      };
+
       pc.onconnectionstatechange = () => {
-        console.log('Connection:', pc.connectionState);
+        console.log('🔗 Connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           setStatus('Connected - Viewer is watching');
           setConnected(true);
@@ -210,41 +156,38 @@ export default function ConnectStream() {
         }
       };
 
-      pc.oniceconnectionstatechange = () => {
-        console.log('ICE:', pc.iceConnectionState);
-      };
-
-      // Set remote description (offer)
-      console.log('📥 Setting offer');
+      // Set remote description (the offer from viewer)
+      console.log('📥 Setting remote description');
       await pc.setRemoteDescription(new RTCSessionDescription(offerData.signal));
-
-      // Process pending ICE candidates
-      console.log('Processing pending candidates:', pendingCandidatesRef.current.length);
-      for (const candidate of pendingCandidatesRef.current) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      }
-      pendingCandidatesRef.current = [];
+      console.log('✅ Remote description set');
 
       // Create answer
       console.log('📤 Creating answer');
       const answer = await pc.createAnswer();
-      
-      console.log('📝 Setting local description (this should trigger ICE gathering)');
-      await pc.setLocalDescription(answer);
-      console.log('✅ Local description set, ICE gathering should start now');
-      console.log('📡 ICE gathering state after setLocalDescription:', pc.iceGatheringState);
+      console.log('✅ Answer created');
 
-      // Send answer immediately - ICE candidates will trickle via onicecandidate
-      console.log('📤 Sending answer (ICE candidates will follow via trickle ICE)');
-      await set(ref(db, `signals/${id}/answer`), {
+      // CRITICAL: Set local description - THIS should trigger ICE gathering
+      console.log('📝 Setting local description (should trigger ICE gathering)');
+      await pc.setLocalDescription(answer);
+      console.log('✅ Local description set');
+      console.log('📡 ICE gathering state:', pc.iceGatheringState);
+
+      // Wait a moment for ICE gathering to start
+      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('📡 ICE gathering state after 500ms:', pc.iceGatheringState);
+
+      // Send answer to viewer
+      console.log('📤 Sending answer to Firebase');
+      await set(ref(db, `signals/${peerId}/answer`), {
         signal: pc.localDescription.toJSON(),
         timestamp: Date.now()
       });
+      console.log('✅ Answer sent');
 
       setStatus('Connecting...');
 
       // Listen for viewer's ICE candidates
-      const viewerCandidatesRef = ref(db, `signals/${id}/viewerCandidates`);
+      const viewerCandidatesRef = ref(db, `signals/${peerId}/viewerCandidates`);
       onValue(viewerCandidatesRef, (snapshot) => {
         const candidates = snapshot.val();
         if (candidates) {
@@ -253,47 +196,48 @@ export default function ConnectStream() {
               if (pc.remoteDescription) {
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
                 console.log('✅ Added viewer ICE candidate');
-              } else {
-                pendingCandidatesRef.current.push(data.candidate);
-                console.log('📝 Queued viewer ICE candidate');
               }
-            } catch (error) {
-              console.error('ICE candidate error:', error);
+            } catch (err) {
+              console.error('❌ Error adding viewer candidate:', err);
             }
           });
         }
       });
 
-      // Track ended
-      stream.getVideoTracks()[0].onended = () => {
-        console.log('🛑 Screen sharing stopped');
-        setStatus('Screen sharing stopped');
-        if (pc) pc.close();
-      };
-
     } catch (error) {
-      if (error.name === 'NotAllowedError') {
-        setStatus('Screen permission denied');
-        console.error('User denied');
-      } else {
-        setStatus('Screen capture failed: ' + error.message);
-        console.error('Error:', error);
-      }
+      console.error('❌ Error in handleOffer:', error);
+      setStatus(`Error: ${error.message}`);
+      hasAnsweredRef.current = false;
+    }
+  };
+
+  const cleanup = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+    }
+    if (id) {
+      remove(ref(db, `peers/${id}`));
+      remove(ref(db, `signals/${id}`));
     }
   };
 
   return (
     <>
       <Head>
-        <title>HebzConnect - Remote Access</title>
+        <title>HebzConnect - Share Screen</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
-        <div className="bg-slate-800/80 backdrop-blur-xl border border-slate-700/50 rounded-3xl shadow-2xl p-8 w-full max-w-2xl">
-          {/* Back Button */}
-          <div className="mb-6">
+
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 text-white">
+        <div className="container mx-auto px-4 py-8">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-8">
             <button
               onClick={() => router.push('/dashboard')}
-              className="flex items-center space-x-2 text-slate-400 hover:text-white transition-colors"
+              className="flex items-center space-x-2 text-gray-300 hover:text-white transition"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -302,60 +246,76 @@ export default function ConnectStream() {
             </button>
           </div>
 
-          <div className="text-center mb-8">
-            <img src="/hebzconnect-logo.png" alt="HebzConnect" className="w-32 h-32 mx-auto mb-4" />
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
-              HebzConnect
-            </h1>
-            <p className="text-slate-400">Remote Access Code</p>
-          </div>
+          {/* Main Card */}
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-gray-800/50 backdrop-blur-sm rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
+              {/* Logo */}
+              <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-8 text-center">
+                <div className="text-6xl mb-4">🖥️</div>
+                <h1 className="text-3xl font-bold">HebzConnect</h1>
+                <p className="text-blue-100 mt-2">Remote Access Code</p>
+              </div>
 
-          <div className="bg-slate-900/50 rounded-2xl p-8 mb-6">
-            <p className="text-slate-400 text-center mb-4">Your Connection Code:</p>
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-1 rounded-xl mb-6">
-              <div className="bg-slate-900 rounded-lg py-8">
-                <h2 className="text-6xl font-bold text-center text-white tracking-wider font-mono">
-                  {code || 'XXX-XXX'}
-                </h2>
+              {/* Content */}
+              <div className="p-8">
+                {/* Connection Code */}
+                <div className="text-center mb-8">
+                  <p className="text-gray-400 mb-4">Your Connection Code:</p>
+                  <div className="relative">
+                    <div className="inline-block bg-gradient-to-r from-blue-500 to-purple-500 p-1 rounded-2xl">
+                      <div className="bg-gray-900 px-12 py-8 rounded-xl">
+                        <div className="text-5xl font-bold tracking-wider">{code}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-gray-400 mt-6 text-sm">
+                    Share this code with the person who will view your screen
+                  </p>
+                </div>
+
+                {/* Status */}
+                <div className="flex items-center justify-center space-x-3 py-4">
+                  <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
+                  <span className="text-lg">{status}</span>
+                </div>
+
+                {/* Instructions */}
+                <div className="mt-8 bg-gray-900/50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center">
+                    <span className="text-2xl mr-2">📋</span>
+                    Instructions:
+                  </h3>
+                  <ol className="space-y-3 text-gray-300">
+                    <li className="flex">
+                      <span className="font-bold mr-3">1.</span>
+                      <span>Share the code above with the viewer</span>
+                    </li>
+                    <li className="flex">
+                      <span className="font-bold mr-3">2.</span>
+                      <span>They will enter the code to connect</span>
+                    </li>
+                    <li className="flex">
+                      <span className="font-bold mr-3">3.</span>
+                      <span>Browser will ask permission to share your screen</span>
+                    </li>
+                    <li className="flex">
+                      <span className="font-bold mr-3">4.</span>
+                      <span>Select "Entire Screen" or specific window</span>
+                    </li>
+                    <li className="flex">
+                      <span className="font-bold mr-3">5.</span>
+                      <span>Click "Share" to begin screen sharing</span>
+                    </li>
+                  </ol>
+                </div>
+
+                {/* Footer */}
+                <div className="mt-8 text-center text-sm text-gray-500">
+                  <p>Developed by Godmisoft</p>
+                  <p className="mt-1">Heber Mayormita © 2025</p>
+                </div>
               </div>
             </div>
-            <p className="text-slate-400 text-center text-sm">
-              Share this code with the person who will view your screen
-            </p>
-          </div>
-
-          <div className="bg-slate-900/30 rounded-xl p-6 mb-6">
-            <div className="flex items-center justify-center space-x-3">
-              <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`}></div>
-              <span className="text-slate-300">{status}</span>
-            </div>
-          </div>
-
-          <div className={`rounded-xl p-6 ${connected ? 'bg-green-900/20 border border-green-700/30' : 'bg-blue-900/20 border border-blue-700/30'}`}>
-            {connected ? (
-              <>
-                <h3 className="text-lg font-semibold text-green-300 mb-3">✅ Connected!</h3>
-                <ul className="text-slate-400 text-sm space-y-2">
-                  <li>• Viewer is watching your screen</li>
-                  <li>• Keep this window open</li>
-                  <li>• Click "Stop Sharing" in browser to end</li>
-                </ul>
-              </>
-            ) : (
-              <>
-                <h3 className="text-lg font-semibold text-blue-300 mb-3">📋 Instructions:</h3>
-                <ol className="text-slate-400 text-sm space-y-2">
-                  <li>1. Share the code above with the viewer</li>
-                  <li>2. They will enter the code to connect</li>
-                  <li>3. Browser will ask to share screen - click "Allow"</li>
-                  <li>4. Select "Entire Screen" for best results</li>
-                </ol>
-              </>
-            )}
-          </div>
-
-          <div className="mt-8 text-center text-xs text-slate-600">
-            Powered by <span className="text-blue-400 font-semibold">Godmisoft</span>
           </div>
         </div>
       </div>
