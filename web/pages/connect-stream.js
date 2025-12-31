@@ -147,7 +147,8 @@ export default function ConnectStream() {
             username: 'openrelayproject',
             credential: 'openrelayproject'
           }
-        ]
+        ],
+        iceTransportPolicy: 'all' // Allow both direct and relay
       };
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
