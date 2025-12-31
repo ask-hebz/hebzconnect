@@ -1,17 +1,89 @@
 {
-  "name": "HebzConnect - Remote Desktop",
+  "name": "HebzConnect",
   "short_name": "HebzConnect",
-  "description": "Professional remote desktop control",
-  "start_url": "/",
+  "description": "Professional Remote Desktop Access - Share your screen anywhere",
+  "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#3b82f6",
+  "orientation": "any",
+  "scope": "/",
   "icons": [
     {
-      "src": "/hebzconnect-logo.png",
+      "src": "/icons/icon-72x72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-144x144.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-152x152.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-384x384.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Share Screen",
+      "short_name": "Share",
+      "description": "Start sharing your screen",
+      "url": "/connect-stream",
+      "icons": [
+        {
+          "src": "/icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "View Remote",
+      "short_name": "View",
+      "description": "View a remote screen",
+      "url": "/dashboard",
+      "icons": [
+        {
+          "src": "/icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }
