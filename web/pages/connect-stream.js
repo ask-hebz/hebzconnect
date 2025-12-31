@@ -143,6 +143,12 @@ export default function ConnectStream() {
         pc.addTrack(track, stream);
         console.log('✅ Track added:', track.kind);
       });
+      
+      // CRITICAL: Add a data channel to ensure ICE gathering starts
+      // Some browsers don't start ICE gathering without at least one data channel or negotiated connection
+      console.log('📡 Creating data channel to trigger ICE gathering');
+      const dataChannel = pc.createDataChannel('dummy');
+      console.log('✅ Data channel created');
 
       // ICE candidates - CRITICAL FOR MOBILE!
       console.log('🔧 Setting up ICE candidate handler');
@@ -206,39 +212,14 @@ export default function ConnectStream() {
       // Create answer
       console.log('📤 Creating answer');
       const answer = await pc.createAnswer();
+      
+      console.log('📝 Setting local description (this should trigger ICE gathering)');
       await pc.setLocalDescription(answer);
-      
-      console.log('⏳ Waiting for ICE gathering to complete...');
-      
-      // CRITICAL FIX: Wait for ICE gathering to complete before sending answer
-      // This ensures all ICE candidates are included in the SDP
-      await new Promise((resolve) => {
-        if (pc.iceGatheringState === 'complete') {
-          console.log('✅ ICE gathering already complete');
-          resolve();
-        } else {
-          const checkGathering = () => {
-            console.log('📡 Current ICE gathering state:', pc.iceGatheringState);
-            if (pc.iceGatheringState === 'complete') {
-              console.log('✅ ICE gathering completed!');
-              pc.removeEventListener('icegatheringstatechange', checkGathering);
-              resolve();
-            }
-          };
-          pc.addEventListener('icegatheringstatechange', checkGathering);
-          checkGathering(); // Check immediately in case it completed already
-          
-          // Timeout after 5 seconds
-          setTimeout(() => {
-            console.log('⚠️ ICE gathering timeout, sending answer anyway');
-            pc.removeEventListener('icegatheringstatechange', checkGathering);
-            resolve();
-          }, 5000);
-        }
-      });
+      console.log('✅ Local description set, ICE gathering should start now');
+      console.log('📡 ICE gathering state after setLocalDescription:', pc.iceGatheringState);
 
-      // Send answer with all ICE candidates included
-      console.log('📤 Sending answer (with ICE candidates)');
+      // Send answer immediately - ICE candidates will trickle via onicecandidate
+      console.log('📤 Sending answer (ICE candidates will follow via trickle ICE)');
       await set(ref(db, `signals/${id}/answer`), {
         signal: pc.localDescription.toJSON(),
         timestamp: Date.now()
