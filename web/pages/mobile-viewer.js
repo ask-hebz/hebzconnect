@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import { initializeApp } from 'firebase/app';
+import { getDatabase, ref, set } from 'firebase/database';
+
+// Initialize Firebase
+const firebaseConfig = {
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
 export default function MobileViewer() {
   const router = useRouter();
@@ -106,15 +115,12 @@ export default function MobileViewer() {
       
       await pc.setLocalDescription(offer);
 
-      // Send via simple HTTP
-      const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
-      await fetch(`${firebaseUrl}/signals/${targetId}/offer.json`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          signal: pc.localDescription.toJSON(),
-          from: 'mobile-viewer',
-          timestamp: Date.now()
-        })
+      // Send via Firebase SDK (NOT HTTP) so the sharer's onValue() will trigger!
+      addLog('📤 Sending offer via Firebase SDK');
+      await set(ref(db, `signals/${targetId}/offer`), {
+        signal: pc.localDescription.toJSON(),
+        from: 'mobile-viewer',
+        timestamp: Date.now()
       });
       
       addLog('📤 Offer sent');
@@ -127,15 +133,12 @@ export default function MobileViewer() {
       // Poll for answer
       pollForAnswer(pc, targetId, firebaseUrl);
 
-      // Send our ICE candidates
+      // Send our ICE candidates via Firebase SDK
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          fetch(`${firebaseUrl}/signals/${targetId}/viewerCandidates/${Date.now()}.json`, {
-            method: 'PUT',
-            body: JSON.stringify({
-              candidate: event.candidate.toJSON(),
-              timestamp: Date.now()
-            })
+          set(ref(db, `signals/${targetId}/viewerCandidates/${Date.now()}`), {
+            candidate: event.candidate.toJSON(),
+            timestamp: Date.now()
           });
         }
       };
