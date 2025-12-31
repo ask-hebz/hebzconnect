@@ -207,9 +207,38 @@ export default function ConnectStream() {
       console.log('📤 Creating answer');
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      
+      console.log('⏳ Waiting for ICE gathering to complete...');
+      
+      // CRITICAL FIX: Wait for ICE gathering to complete before sending answer
+      // This ensures all ICE candidates are included in the SDP
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          console.log('✅ ICE gathering already complete');
+          resolve();
+        } else {
+          const checkGathering = () => {
+            console.log('📡 Current ICE gathering state:', pc.iceGatheringState);
+            if (pc.iceGatheringState === 'complete') {
+              console.log('✅ ICE gathering completed!');
+              pc.removeEventListener('icegatheringstatechange', checkGathering);
+              resolve();
+            }
+          };
+          pc.addEventListener('icegatheringstatechange', checkGathering);
+          checkGathering(); // Check immediately in case it completed already
+          
+          // Timeout after 5 seconds
+          setTimeout(() => {
+            console.log('⚠️ ICE gathering timeout, sending answer anyway');
+            pc.removeEventListener('icegatheringstatechange', checkGathering);
+            resolve();
+          }, 5000);
+        }
+      });
 
-      // Send answer immediately
-      console.log('📤 Sending answer');
+      // Send answer with all ICE candidates included
+      console.log('📤 Sending answer (with ICE candidates)');
       await set(ref(db, `signals/${id}/answer`), {
         signal: pc.localDescription.toJSON(),
         timestamp: Date.now()
