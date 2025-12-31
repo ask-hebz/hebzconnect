@@ -144,8 +144,11 @@ export default function ConnectStream() {
         console.log('✅ Track added:', track.kind);
       });
 
-      // ICE candidates
+      // ICE candidates - CRITICAL FOR MOBILE!
+      console.log('🔧 Setting up ICE candidate handler');
       pc.onicecandidate = (event) => {
+        console.log('🎯 onicecandidate event fired!', event.candidate ? 'HAS CANDIDATE' : 'NULL');
+        
         if (event.candidate) {
           console.log('🧊 Sending ICE candidate to Firebase');
           console.log('   Path:', `signals/${id}/sharerCandidates/${Date.now()}`);
@@ -163,6 +166,7 @@ export default function ConnectStream() {
           console.log('✅ All ICE candidates sent (event.candidate is null)');
         }
       };
+      console.log('✅ ICE candidate handler registered');
 
       // Connection state
       pc.onconnectionstatechange = () => {
