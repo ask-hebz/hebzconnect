@@ -147,11 +147,20 @@ export default function ConnectStream() {
       // ICE candidates
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log('🧊 Sending ICE candidate');
+          console.log('🧊 Sending ICE candidate to Firebase');
+          console.log('   Path:', `signals/${id}/sharerCandidates/${Date.now()}`);
+          console.log('   Candidate:', event.candidate);
+          
           set(ref(db, `signals/${id}/sharerCandidates/${Date.now()}`), {
             candidate: event.candidate.toJSON(),
             timestamp: Date.now()
+          }).then(() => {
+            console.log('✅ ICE candidate sent successfully');
+          }).catch(err => {
+            console.error('❌ Failed to send ICE candidate:', err);
           });
+        } else {
+          console.log('✅ All ICE candidates sent (event.candidate is null)');
         }
       };
 
