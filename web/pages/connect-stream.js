@@ -130,9 +130,24 @@ export default function ConnectStream() {
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
+          { urls: 'stun:stun4.l.google.com:19302' },
+          // FREE TURN server for mobile NAT traversal
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
         ]
-        // Removed iceCandidatePoolSize - it was preventing ICE gathering from starting
       };
       const pc = new RTCPeerConnection(configuration);
       peerConnectionRef.current = pc;
