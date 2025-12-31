@@ -51,9 +51,8 @@ export default function MobileViewer() {
             credential: 'openrelayproject'
           }
         ],
-        iceTransportPolicy: 'relay',
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require'
+        iceTransportPolicy: 'relay'
+        // Removed bundlePolicy - it breaks mobile when no audio/data channel
       });
 
       pcRef.current = pc;
