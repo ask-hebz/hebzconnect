@@ -1,14 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set } from 'firebase/database';
+import { app } from '../lib/firebase'; // Use existing Firebase app
 
-// Initialize Firebase
-const firebaseConfig = {
-  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
-};
-const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 export default function MobileViewer() {
