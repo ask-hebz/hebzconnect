@@ -52,6 +52,7 @@ export default function MobileViewer() {
       pc.ontrack = (event) => {
         addLog('📺 Video received!');
         if (videoRef.current && event.streams[0]) {
+          addLog('🎬 Attaching stream...');
           videoRef.current.srcObject = event.streams[0];
           videoRef.current.play().then(() => {
             addLog('✅ Playing video');
@@ -61,7 +62,12 @@ export default function MobileViewer() {
           }).catch(err => {
             addLog('🔇 Trying muted...');
             videoRef.current.muted = true;
-            videoRef.current.play();
+            videoRef.current.play().then(() => {
+              addLog('✅ Video playing (muted)');
+              setHasVideo(true);
+              setConnected(true);
+              setStatus('Connected');
+            });
           });
         }
       };
@@ -98,11 +104,12 @@ export default function MobileViewer() {
       addLog('📤 Offer sent');
       setStatus('Waiting for answer...');
 
-      // Poll for answer (simple HTTP polling)
-      pollForAnswer(pc, targetId, firebaseUrl);
-      
-      // Poll for ICE candidates
+      // Start ICE polling IMMEDIATELY (don't wait for answer)
+      addLog('🔄 Starting ICE candidate polling...');
       pollForCandidates(pc, targetId, firebaseUrl);
+
+      // Poll for answer
+      pollForAnswer(pc, targetId, firebaseUrl);
 
       // Send our ICE candidates
       pc.onicecandidate = (event) => {
@@ -160,34 +167,45 @@ export default function MobileViewer() {
   };
 
   const pollForCandidates = async (pc, targetId, firebaseUrl) => {
+    let pollCount = 0;
+    
     const poll = async () => {
       try {
+        pollCount++;
         const response = await fetch(`${firebaseUrl}/signals/${targetId}/sharerCandidates.json`);
         const candidates = await response.json();
         
         if (candidates) {
           const count = Object.keys(candidates).length;
           if (count > 0) {
-            addLog(`🧊 Processing ${count} ICE candidates`);
+            addLog(`🧊 Found ${count} ICE candidates`);
           }
           
           for (const data of Object.values(candidates)) {
             try {
               if (pc.remoteDescription) {
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                addLog(`✅ Added ICE candidate`);
               }
             } catch (err) {
               // Ignore duplicate candidates
             }
           }
+        } else {
+          if (pollCount % 5 === 0) {
+            addLog(`⏳ No ICE candidates yet (poll ${pollCount})`);
+          }
         }
         
-        // Keep polling if still connecting
-        if (pc.connectionState !== 'connected' && pc.connectionState !== 'closed') {
-          setTimeout(poll, 2000);
+        // Keep polling until we have video OR connection closes
+        if (!hasVideo && pc.connectionState !== 'closed' && pc.connectionState !== 'failed') {
+          setTimeout(poll, 1000); // Poll every 1 second
         }
       } catch (error) {
-        setTimeout(poll, 2000);
+        addLog(`⚠️ ICE poll error: ${error.message}`);
+        if (!hasVideo && pc.connectionState !== 'closed') {
+          setTimeout(poll, 2000);
+        }
       }
     };
 
