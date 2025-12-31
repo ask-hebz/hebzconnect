@@ -146,6 +146,8 @@ export default function ConnectStream() {
 
       // ICE candidates - CRITICAL FOR MOBILE!
       console.log('🔧 Setting up ICE candidate handler');
+      let iceGatheringComplete = false;
+      
       pc.onicecandidate = (event) => {
         console.log('🎯 onicecandidate event fired!', event.candidate ? 'HAS CANDIDATE' : 'NULL');
         
@@ -163,9 +165,15 @@ export default function ConnectStream() {
             console.error('❌ Failed to send ICE candidate:', err);
           });
         } else {
-          console.log('✅ All ICE candidates sent (event.candidate is null)');
+          console.log('✅ All ICE candidates sent (gathering complete)');
+          iceGatheringComplete = true;
         }
       };
+      
+      pc.onicegatheringstatechange = () => {
+        console.log('📡 ICE gathering state:', pc.iceGatheringState);
+      };
+      
       console.log('✅ ICE candidate handler registered');
 
       // Connection state
