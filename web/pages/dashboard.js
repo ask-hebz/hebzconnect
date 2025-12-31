@@ -8,6 +8,7 @@ export default function Dashboard() {
   const [onlineScreens, setOnlineScreens] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showScreensList, setShowScreensList] = useState(false);
+  const [viewerMode, setViewerMode] = useState('desktop'); // 'desktop' or 'mobile'
 
   const handleShareScreen = () => {
     router.push('/connect-stream');
@@ -50,7 +51,11 @@ export default function Dashboard() {
   };
 
   const connectToScreen = (peerId) => {
-    router.push(`/remote?peer=${peerId}`);
+    if (viewerMode === 'mobile') {
+      router.push(`/mobile-viewer?peer=${peerId}`);
+    } else {
+      router.push(`/remote?peer=${peerId}`);
+    }
   };
 
   const handleManualCode = () => {
@@ -146,6 +151,45 @@ export default function Dashboard() {
           {showScreensList && (
             <div className="max-w-4xl mx-auto mb-12 animate-fadeIn">
               <div className="bg-slate-800/50 rounded-3xl p-8">
+                {/* Desktop/Mobile Tabs */}
+                <div className="flex justify-center mb-6">
+                  <div className="bg-slate-900/50 rounded-xl p-1 inline-flex">
+                    <button
+                      onClick={() => setViewerMode('desktop')}
+                      className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                        viewerMode === 'desktop'
+                          ? 'bg-blue-600 text-white shadow-lg'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🖥️ Desktop Viewer
+                    </button>
+                    <button
+                      onClick={() => setViewerMode('mobile')}
+                      className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                        viewerMode === 'mobile'
+                          ? 'bg-purple-600 text-white shadow-lg'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      📱 Mobile Viewer
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mode Description */}
+                <div className="text-center mb-6">
+                  {viewerMode === 'desktop' ? (
+                    <p className="text-slate-400 text-sm">
+                      🖥️ Best for viewing on desktop/laptop browsers
+                    </p>
+                  ) : (
+                    <p className="text-slate-400 text-sm">
+                      📱 Optimized for mobile phones and tablets (Simpler, faster connection)
+                    </p>
+                  )}
+                </div>
+
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-2xl font-bold text-white">Available Screens</h3>
                   <div className="flex space-x-3">
