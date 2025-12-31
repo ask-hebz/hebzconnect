@@ -140,6 +140,7 @@ export default function MobileViewer() {
       log('📥 Answer received!');
       await pc.setRemoteDescription(data.signal);
       log('✅ Answer set');
+      setStatus('Connected - Waiting for video...'); // UPDATE STATUS!
 
       // FLUSH QUEUED ICE CANDIDATES
       if (pendingIce.current.length > 0) {
@@ -149,6 +150,8 @@ export default function MobileViewer() {
         }
         pendingIce.current = [];
         log('✅ Queued ICE flushed');
+      } else {
+        log('ℹ️ No queued ICE candidates to flush');
       }
     } catch (err) {
       log(`❌ Error: ${err.message}`);
@@ -167,28 +170,35 @@ export default function MobileViewer() {
       if (data) {
         const candidates = Object.values(data);
         
-        for (const v of candidates) {
-          if (pc.remoteDescription) {
-            // Answer is set, add immediately
-            await pc.addIceCandidate(new RTCIceCandidate(v.candidate));
-          } else {
-            // Queue until answer arrives
-            if (!pendingIce.current.some(c => JSON.stringify(c) === JSON.stringify(v.candidate))) {
-              pendingIce.current.push(v.candidate);
+        if (candidates.length > 0) {
+          for (const v of candidates) {
+            if (pc.remoteDescription) {
+              // Answer is set, add immediately
+              await pc.addIceCandidate(new RTCIceCandidate(v.candidate));
+            } else {
+              // Queue until answer arrives
+              if (!pendingIce.current.some(c => JSON.stringify(c) === JSON.stringify(v.candidate))) {
+                pendingIce.current.push(v.candidate);
+              }
             }
           }
-        }
-        
-        if (pc.remoteDescription) {
-          log(`🧊 Added ${candidates.length} ICE candidates`);
+          
+          if (pc.remoteDescription) {
+            log(`🧊 Added ${candidates.length} ICE candidates`);
+          } else {
+            log(`🧊 Queued ${pendingIce.current.length} ICE candidates (waiting for answer)`);
+          }
         } else {
-          log(`🧊 Queued ${pendingIce.current.length} ICE candidates`);
+          log('⏳ No ICE candidates yet...');
         }
+      } else {
+        log('⏳ No ICE data in Firebase yet...');
       }
     } catch (err) {
-      // Continue polling even on error
+      log(`⚠️ ICE poll error: ${err.message}`);
     }
     
+    // Continue polling every 1.2 seconds
     setTimeout(() => pollCandidates(pc, id), 1200);
   };
 
